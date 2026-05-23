@@ -13,9 +13,9 @@ struct BroadcastBrowserView: View {
     var body: some View {
         ZStack {
             LinearGradient(
-                colors: [Color(red: 0.02, green: 0.03, blue: 0.04), Color(red: 0.09, green: 0.10, blue: 0.12)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+                colors: [Color(red: 0.20, green: 0.22, blue: 0.24), Color(red: 0.02, green: 0.03, blue: 0.04)],
+                startPoint: .top,
+                endPoint: .bottom
             )
             .ignoresSafeArea()
 
