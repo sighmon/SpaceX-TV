@@ -1,0 +1,18 @@
+{
+  "images" : [
+    {
+      "filename" : "spacex-tvos-icon.png",
+      "idiom" : "tv",
+      "scale" : "1x"
+    },
+    {
+      "filename" : "spacex-tvos-icon@2x.png",
+      "idiom" : "tv",
+      "scale" : "2x"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
