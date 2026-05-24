@@ -26,20 +26,29 @@ struct BroadcastResolver {
     func resolve(_ broadcast: Broadcast) async throws -> ResolvedBroadcast {
         switch broadcast.sourceKind {
         case .hls:
-            return ResolvedBroadcast(title: broadcast.title, streamURL: broadcast.sourceURL)
+            return ResolvedBroadcast(title: broadcast.title, streamURL: broadcast.sourceURL, thumbnailURL: broadcast.thumbnailURL)
         case .xBroadcast:
             if let streamURL = broadcast.streamURL {
-                return ResolvedBroadcast(title: broadcast.title, streamURL: streamURL)
+                return ResolvedBroadcast(title: broadcast.title, streamURL: streamURL, thumbnailURL: broadcast.thumbnailURL)
             }
 
-            let streamURL = try await streamURL(fromStatusURL: broadcast.sourceURL)
-            return ResolvedBroadcast(title: broadcast.title, streamURL: streamURL)
+            let resolved = try await resolveStatusURL(broadcast.sourceURL)
+            return ResolvedBroadcast(
+                title: broadcast.title,
+                streamURL: resolved.streamURL,
+                thumbnailURL: broadcast.thumbnailURL ?? resolved.thumbnailURL,
+                isLive: resolved.isLive
+            )
         }
     }
 
     func streamURL(fromStatusURL statusURL: URL) async throws -> URL {
+        try await resolveStatusURL(statusURL).streamURL
+    }
+
+    func resolveStatusURL(_ statusURL: URL) async throws -> ResolvedBroadcast {
         if let broadcastID = xBroadcastID(from: statusURL) {
-            return try await xBroadcastStreamURL(broadcastID: broadcastID)
+            return try await xBroadcastStream(broadcastID: broadcastID)
         }
 
         var request = URLRequest(url: statusURL)
@@ -77,7 +86,11 @@ struct BroadcastResolver {
             throw BroadcastResolverError.missingStream
         }
 
-        return try await highestQualityStreamURL(from: streamURL)
+        return ResolvedBroadcast(
+            title: nil,
+            streamURL: try await highestQualityStreamURL(from: streamURL),
+            thumbnailURL: pageThumbnailURL(in: normalizedBody)
+        )
     }
 
     private func xBroadcastID(from url: URL) -> String? {
@@ -90,7 +103,7 @@ struct BroadcastResolver {
         return pathComponents[pathComponents.index(after: broadcastsIndex)]
     }
 
-    private func xBroadcastStreamURL(broadcastID: String) async throws -> URL {
+    private func xBroadcastStream(broadcastID: String) async throws -> ResolvedBroadcast {
         let webBearerToken = try await xWebBearerToken()
         let guestToken = try await xGuestToken(bearerToken: webBearerToken)
         let broadcast = try await xBroadcast(
@@ -108,7 +121,12 @@ struct BroadcastResolver {
             throw BroadcastResolverError.missingStream
         }
 
-        return try await highestQualityStreamURL(from: streamURL)
+        return ResolvedBroadcast(
+            title: broadcast.title,
+            streamURL: try await highestQualityStreamURL(from: streamURL),
+            thumbnailURL: broadcast.thumbnailURL ?? source.thumbnailURL,
+            isLive: broadcast.isLive
+        )
     }
 
     private func xGuestToken(bearerToken: String) async throws -> String {
@@ -306,6 +324,50 @@ struct BroadcastResolver {
             .replacingOccurrences(of: "BANDWIDTH=", with: "")
         return Int(value)
     }
+
+    private func pageThumbnailURL(in body: String) -> URL? {
+        let patterns = [
+            #"<meta[^>]+(?:property|name)=["']og:image(?::secure_url)?["'][^>]+content=["']([^"']+)["']"#,
+            #"<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']og:image(?::secure_url)?["']"#,
+            #"<meta[^>]+(?:property|name)=["']twitter:image(?::src)?["'][^>]+content=["']([^"']+)["']"#,
+            #"<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']twitter:image(?::src)?["']"#,
+        ]
+
+        for pattern in patterns {
+            guard let match = firstMatch(pattern: pattern, in: body) else {
+                continue
+            }
+            let decoded = htmlDecoded(match)
+                .replacingOccurrences(of: #"\/"#, with: "/")
+            if let url = URL(string: decoded), url.scheme?.hasPrefix("http") == true {
+                return url
+            }
+        }
+
+        return nil
+    }
+
+    private func firstMatch(pattern: String, in body: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return nil
+        }
+        let range = NSRange(body.startIndex ..< body.endIndex, in: body)
+        guard let match = regex.firstMatch(in: body, range: range),
+              match.numberOfRanges > 1,
+              let valueRange = Range(match.range(at: 1), in: body) else {
+            return nil
+        }
+        return String(body[valueRange])
+    }
+
+    private func htmlDecoded(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+    }
 }
 
 private struct XBroadcastShowResponse: Decodable {
@@ -322,9 +384,30 @@ private struct XGuestTokenResponse: Decodable {
 
 private struct XBroadcast: Decodable {
     var mediaKey: String
+    var title: String?
+    var imageURL: URL?
+    var imageURLSmall: URL?
+    var imageURLMedium: URL?
+    var imageURLLarge: URL?
+    var state: String?
+
+    var thumbnailURL: URL? {
+        imageURLLarge ?? imageURLMedium ?? imageURL ?? imageURLSmall
+    }
+
+    var isLive: Bool? {
+        guard let state else { return nil }
+        return state.lowercased() == "running"
+    }
 
     enum CodingKeys: String, CodingKey {
         case mediaKey = "media_key"
+        case title
+        case imageURL = "image_url"
+        case imageURLSmall = "image_url_small"
+        case imageURLMedium = "image_url_medium"
+        case imageURLLarge = "image_url_large"
+        case state
     }
 }
 
@@ -335,9 +418,17 @@ private struct XLiveVideoStreamResponse: Decodable {
 private struct XLiveVideoSource: Decodable {
     var location: URL?
     var noRedirectPlaybackURL: URL?
+    var sourceThumbnailURL: URL?
+    var imageURL: URL?
+
+    var thumbnailURL: URL? {
+        sourceThumbnailURL ?? imageURL
+    }
 
     enum CodingKeys: String, CodingKey {
         case location
         case noRedirectPlaybackURL = "noRedirectPlaybackUrl"
+        case sourceThumbnailURL = "thumbnail_url"
+        case imageURL = "image_url"
     }
 }

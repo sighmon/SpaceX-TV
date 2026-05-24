@@ -48,16 +48,25 @@ struct BroadcastDiscovery {
 
             do {
                 let streamURL: URL
+                let resolvedThumbnailURL: URL?
                 if let apiStreamURL = candidate.streamURL {
                     streamURL = apiStreamURL
+                    resolvedThumbnailURL = nil
                     report.add("Using X API media variant for \(statusURL.lastPathComponent)")
                 } else {
-                    streamURL = try await resolver.streamURL(fromStatusURL: statusURL)
+                    let resolved = try await resolver.resolveStatusURL(statusURL)
+                    streamURL = resolved.streamURL
+                    resolvedThumbnailURL = resolved.thumbnailURL
                     report.add("Found page stream for \(statusURL.lastPathComponent)")
+                    report.add("Page thumbnail for \(statusURL.lastPathComponent): \(resolvedThumbnailURL == nil ? "missing" : "present")")
                 }
 
                 report.add("Found stream for \(statusURL.lastPathComponent)")
-                broadcasts.append(broadcast(from: candidate, streamURL: streamURL))
+                broadcasts.append(broadcast(
+                    from: candidate,
+                    streamURL: streamURL,
+                    thumbnailURL: candidate.thumbnailURL ?? resolvedThumbnailURL
+                ))
             } catch {
                 if candidate.allowsDeferredStreamResolution {
                     report.add("Deferring stream resolution for linked broadcast \(statusURL.lastPathComponent): \(debugMessage(for: error))")
@@ -76,7 +85,7 @@ struct BroadcastDiscovery {
         return BroadcastDiscoveryResult(broadcasts: broadcasts, report: report)
     }
 
-    private func broadcast(from candidate: BroadcastCandidate, streamURL: URL?) -> Broadcast {
+    private func broadcast(from candidate: BroadcastCandidate, streamURL: URL?, thumbnailURL: URL? = nil) -> Broadcast {
         Broadcast(
             title: candidate.title,
             subtitle: candidate.subtitle,
@@ -85,7 +94,7 @@ struct BroadcastDiscovery {
             streamURL: streamURL,
             tweetText: candidate.tweetText,
             publishedAt: candidate.publishedAt,
-            thumbnailURL: candidate.thumbnailURL,
+            thumbnailURL: thumbnailURL ?? candidate.thumbnailURL,
             artworkName: "antenna.radiowaves.left.and.right"
         )
     }
