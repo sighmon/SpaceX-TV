@@ -231,7 +231,8 @@ private struct BroadcastCard: View {
             )
             Image(systemName: broadcast.artworkName)
                 .font(.system(size: 76, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.28))
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(.white.opacity(0.72))
         }
         .frame(maxWidth: .infinity, minHeight: 300)
     }

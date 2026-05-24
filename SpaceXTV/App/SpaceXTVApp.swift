@@ -8,6 +8,7 @@ struct SpaceXTVApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(library)
+                .preferredColorScheme(.dark)
         }
     }
 }

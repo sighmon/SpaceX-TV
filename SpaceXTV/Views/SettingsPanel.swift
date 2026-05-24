@@ -61,6 +61,6 @@ struct SettingsView: View {
             .padding(.horizontal, 84)
             .padding(.vertical, 54)
         }
-        .navigationTitle("Settings")
+        // .navigationTitle("Settings")
     }
 }
