@@ -19,7 +19,7 @@ The app discovers recent SpaceX broadcast posts, shows them as selectable poster
 - Daily cache for API discovery responses so app relaunches do not always hit X again.
 - Full-width tvOS player with end-of-video actions for Back and Replay.
 - Settings view opened from the gear button.
-- Secure Bearer Token field stored in `UserDefaults`.
+- Secure Bearer Token field stored in Keychain.
 - Optional player debug overlay, off by default.
 - Broadcast cards with thumbnail backgrounds, tweet text, and date.
 
@@ -39,10 +39,10 @@ The app reads attached media variants and linked broadcast URLs from the returne
 
 Open Settings with the gear icon in the root view.
 
-- `Bearer Token`: [X API Bearer Token](https://docs.x.com/x-api/introduction) for timeline discovery.
+- `Bearer Token`: [X API Bearer Token](https://docs.x.com/x-api/introduction) for timeline discovery and stream resolution.
 - `Player Debug Overlay`: shows AVPlayer status, access log, and error log details while playing.
 
-For simulator testing, the easiest token entry path is usually paste through the simulator keyboard or set the saved `UserDefaults` value from a local debug session. The token is not hard-coded in the app.
+For simulator testing, the easiest token entry path is usually paste through the simulator keyboard. The token is saved to Keychain and is not hard-coded in the app.
 
 ## Build
 

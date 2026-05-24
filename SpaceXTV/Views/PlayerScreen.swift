@@ -12,19 +12,22 @@ final class PlayerViewModel: ObservableObject {
     @Published private(set) var state: State = .resolving
     @Published private(set) var debugLines: [String] = []
     private let broadcast: Broadcast
+    private var hasStarted = false
 
     init(broadcast: Broadcast) {
         self.broadcast = broadcast
     }
 
-    func start() async {
+    func start(xAPIBearerToken: String) async {
+        guard !hasStarted else { return }
+        hasStarted = true
         state = .resolving
         debugLines = [
             "Status: \(broadcast.sourceURL.absoluteString)",
             "Stored stream: \(broadcast.streamURL?.absoluteString ?? "none")",
         ]
         do {
-            let resolved = try await BroadcastResolver().resolve(broadcast)
+            let resolved = try await BroadcastResolver(xAPIBearerToken: xAPIBearerToken).resolve(broadcast)
             debugLines.append("Resolved stream: \(resolved.streamURL.absoluteString)")
             await preflight(resolved.streamURL)
             state = .ready(resolved.streamURL, resolved.title ?? broadcast.title)
@@ -40,7 +43,9 @@ final class PlayerViewModel: ObservableObject {
     }
 
     private func preflight(_ streamURL: URL) async {
+        let isPlaylist = streamURL.pathExtension.lowercased() == "m3u8"
         var request = URLRequest(url: streamURL)
+        request.httpMethod = isPlaylist ? "GET" : "HEAD"
         request.setValue("Mozilla/5.0 AppleTV SpaceXTV/1.0", forHTTPHeaderField: "User-Agent")
         request.setValue("https://x.com/", forHTTPHeaderField: "Referer")
         request.timeoutInterval = 15
@@ -48,13 +53,13 @@ final class PlayerViewModel: ObservableObject {
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-            debugLines.append("HLS preflight HTTP \(statusCode), \(data.count) bytes")
+            debugLines.append("\(isPlaylist ? "HLS" : "Stream") preflight HTTP \(statusCode), \(data.count) bytes")
 
-            if let preview = String(data: data.prefix(120), encoding: .utf8) {
+            if isPlaylist, let preview = String(data: data.prefix(120), encoding: .utf8) {
                 debugLines.append("HLS preview: \(preview.replacingOccurrences(of: "\n", with: " "))")
             }
         } catch {
-            debugLines.append("HLS preflight failed: \(error.localizedDescription)")
+            debugLines.append("\(isPlaylist ? "HLS" : "Stream") preflight failed: \(error.localizedDescription)")
         }
     }
 }
@@ -77,7 +82,7 @@ struct PlayerScreen: View {
                 ProgressView("Resolving stream...")
                     .font(.title2)
                     .task {
-                        await model.start()
+                        await model.start(xAPIBearerToken: library.xAPIBearerToken)
                     }
             case .ready(let url, _):
                 ZStack(alignment: .bottomLeading) {

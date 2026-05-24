@@ -16,7 +16,7 @@ final class BroadcastLibrary: ObservableObject {
     @Published private(set) var debugLines: [String] = []
     @Published var xAPIBearerToken: String {
         didSet {
-            defaults.set(xAPIBearerToken, forKey: Keys.xAPIBearerToken)
+            tokenStore.save(xAPIBearerToken)
         }
     }
     @Published var showsPlayerDebugOverlay: Bool {
@@ -27,6 +27,7 @@ final class BroadcastLibrary: ObservableObject {
 
     private let discovery: BroadcastDiscovery
     private let defaults: UserDefaults
+    private let tokenStore: KeychainTokenStore
     private let calendar: Calendar
     private let pageSize = 10
     private let maximumBroadcastLimit = 20
@@ -40,13 +41,22 @@ final class BroadcastLibrary: ObservableObject {
     init(
         discovery: BroadcastDiscovery = BroadcastDiscovery(),
         defaults: UserDefaults = .standard,
+        tokenStore: KeychainTokenStore = KeychainTokenStore(),
         calendar: Calendar = .current
     ) {
         self.discovery = discovery
         self.defaults = defaults
+        self.tokenStore = tokenStore
         self.calendar = calendar
         self.broadcasts = []
-        self.xAPIBearerToken = defaults.string(forKey: Keys.xAPIBearerToken) ?? ""
+        let keychainToken = tokenStore.token()
+        if keychainToken.isEmpty, let legacyToken = defaults.string(forKey: Keys.xAPIBearerToken), !legacyToken.isEmpty {
+            self.xAPIBearerToken = legacyToken
+            tokenStore.save(legacyToken)
+        } else {
+            self.xAPIBearerToken = keychainToken
+        }
+        defaults.removeObject(forKey: Keys.xAPIBearerToken)
         self.showsPlayerDebugOverlay = defaults.bool(forKey: Keys.showsPlayerDebugOverlay)
     }
 
