@@ -12,6 +12,7 @@ final class BroadcastLibrary: ObservableObject {
 
     @Published private(set) var broadcasts: [Broadcast]
     @Published private(set) var loadingState: LoadingState = .idle
+    @Published private(set) var isLoadingMore = false
     @Published private(set) var debugLines: [String] = []
     @Published var xAPIBearerToken: String {
         didSet {
@@ -27,6 +28,9 @@ final class BroadcastLibrary: ObservableObject {
     private let discovery: BroadcastDiscovery
     private let defaults: UserDefaults
     private let calendar: Calendar
+    private let pageSize = 10
+    private let maximumBroadcastLimit = 20
+    private var cachedBroadcasts: [Broadcast] = []
 
     init(
         discovery: BroadcastDiscovery = BroadcastDiscovery(),
@@ -42,7 +46,7 @@ final class BroadcastLibrary: ObservableObject {
     }
 
     func load() async {
-        if restoreDailyCache() {
+        if restoreDailyCache(minimumLimit: pageSize) {
             return
         }
         await refresh()
@@ -50,18 +54,25 @@ final class BroadcastLibrary: ObservableObject {
 
     func refresh() async {
         loadingState = .loading
+        isLoadingMore = false
         debugLines = ["Starting refresh"]
         do {
             let token = xAPIBearerToken.trimmingCharacters(in: .whitespacesAndNewlines)
             let result = try await discovery.discoverRecentSpaceXBroadcasts(
-                limit: 10,
+                limit: pageSize,
                 xAPIBearerToken: token.isEmpty ? nil : token
             )
-            broadcasts = result.broadcasts
+            cachedBroadcasts = result.broadcasts
+            broadcasts = Array(result.broadcasts.prefix(pageSize))
             debugLines = result.report.lines
-            saveDailyCache(broadcasts: result.broadcasts, debugLines: result.report.lines)
+            saveDailyCache(
+                broadcasts: result.broadcasts,
+                debugLines: result.report.lines,
+                requestedLimit: pageSize
+            )
             loadingState = .loaded
         } catch {
+            cachedBroadcasts = []
             broadcasts = []
             if let failure = error as? BroadcastDiscoveryFailure {
                 debugLines = failure.report.lines
@@ -70,22 +81,66 @@ final class BroadcastLibrary: ObservableObject {
         }
     }
 
-    private func restoreDailyCache() -> Bool {
+    func loadMoreIfNeeded(currentBroadcast: Broadcast) async {
+        guard broadcasts.last?.id == currentBroadcast.id else { return }
+        await loadMore()
+    }
+
+    func loadMore() async {
+        guard !isLoadingMore else { return }
+        guard broadcasts.count < maximumBroadcastLimit else { return }
+
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+
+        let targetLimit = min(broadcasts.count + pageSize, maximumBroadcastLimit)
+        if cachedBroadcasts.count >= targetLimit {
+            broadcasts = Array(cachedBroadcasts.prefix(targetLimit))
+            return
+        }
+
+        do {
+            let token = xAPIBearerToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            let result = try await discovery.discoverRecentSpaceXBroadcasts(
+                limit: targetLimit,
+                xAPIBearerToken: token.isEmpty ? nil : token
+            )
+            cachedBroadcasts = result.broadcasts
+            broadcasts = Array(result.broadcasts.prefix(targetLimit))
+            debugLines = result.report.lines
+            saveDailyCache(
+                broadcasts: result.broadcasts,
+                debugLines: result.report.lines,
+                requestedLimit: targetLimit
+            )
+        } catch {
+            if let failure = error as? BroadcastDiscoveryFailure {
+                debugLines = failure.report.lines
+            } else {
+                debugLines.append("Load more failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)")
+            }
+        }
+    }
+
+    private func restoreDailyCache(minimumLimit: Int) -> Bool {
         guard let data = defaults.data(forKey: Keys.dailyCache),
               let cache = try? JSONDecoder().decode(DailyBroadcastCache.self, from: data),
+              (cache.requestedLimit ?? 0) >= minimumLimit,
               calendar.isDate(cache.createdAt, inSameDayAs: Date()) else {
             return false
         }
 
-        broadcasts = cache.broadcasts
+        cachedBroadcasts = cache.broadcasts
+        broadcasts = Array(cache.broadcasts.prefix(pageSize))
         debugLines = ["Loaded \(cache.broadcasts.count) broadcasts from today's cache"] + cache.debugLines
         loadingState = .loaded
         return true
     }
 
-    private func saveDailyCache(broadcasts: [Broadcast], debugLines: [String]) {
+    private func saveDailyCache(broadcasts: [Broadcast], debugLines: [String], requestedLimit: Int) {
         let cache = DailyBroadcastCache(
             createdAt: Date(),
+            requestedLimit: requestedLimit,
             broadcasts: broadcasts,
             debugLines: debugLines
         )
@@ -104,6 +159,7 @@ private enum Keys {
 
 private struct DailyBroadcastCache: Codable {
     var createdAt: Date
+    var requestedLimit: Int?
     var broadcasts: [Broadcast]
     var debugLines: [String]
 }

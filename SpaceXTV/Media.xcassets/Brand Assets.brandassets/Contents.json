@@ -13,6 +13,9 @@
       "size" : "400x240"
     },
     {
+      "filename" : "SpaceX.imageset"
+    },
+    {
       "filename" : "Top Shelf Image Wide.imageset",
       "idiom" : "tv",
       "role" : "top-shelf-image-wide",

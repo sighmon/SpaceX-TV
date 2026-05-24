@@ -60,8 +60,11 @@ final class PlayerViewModel: ObservableObject {
 }
 
 struct PlayerScreen: View {
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var library: BroadcastLibrary
     @StateObject private var model: PlayerViewModel
+    @State private var showsCompletionOverlay = false
+    @State private var replayRequest = 0
 
     init(broadcast: Broadcast) {
         _model = StateObject(wrappedValue: PlayerViewModel(broadcast: broadcast))
@@ -78,7 +81,13 @@ struct PlayerScreen: View {
                     }
             case .ready(let url, _):
                 ZStack(alignment: .bottomLeading) {
-                    TVPlayerView(streamURL: url) { line in
+                    TVPlayerView(
+                        streamURL: url,
+                        replayRequest: replayRequest,
+                        onEnded: {
+                            showsCompletionOverlay = true
+                        }
+                    ) { line in
                         model.appendPlayerDebug(line)
                     }
                     .ignoresSafeArea()
@@ -103,11 +112,26 @@ struct PlayerScreen: View {
                 .padding(60)
             }
         }
+        .fullScreenCover(isPresented: $showsCompletionOverlay) {
+            PlaybackCompleteOverlay(
+                onReplay: {
+                    showsCompletionOverlay = false
+                    replayRequest += 1
+                },
+                onBack: {
+                    showsCompletionOverlay = false
+                    dismiss()
+                }
+            )
+            .preferredColorScheme(.dark)
+        }
     }
 }
 
 struct TVPlayerView: UIViewControllerRepresentable {
     var streamURL: URL
+    var replayRequest: Int
+    var onEnded: () -> Void
     var onDebug: (String) -> Void
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
@@ -120,6 +144,14 @@ struct TVPlayerView: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
         let currentURL = (controller.player?.currentItem?.asset as? AVURLAsset)?.url
+        if context.coordinator.lastReplayRequest != replayRequest {
+            context.coordinator.lastReplayRequest = replayRequest
+            controller.player?.seek(to: .zero)
+            controller.player?.play()
+            onDebug("Replay requested")
+            return
+        }
+
         guard currentURL != streamURL else { return }
 
         controller.player = context.coordinator.makePlayer(for: streamURL)
@@ -127,15 +159,25 @@ struct TVPlayerView: UIViewControllerRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onDebug: onDebug)
+        Coordinator(onEnded: onEnded, onDebug: onDebug)
     }
 
     final class Coordinator: NSObject {
+        var lastReplayRequest = 0
+        private let onEnded: () -> Void
         private let onDebug: (String) -> Void
         private var statusObservation: NSKeyValueObservation?
+        private var endObserver: NSObjectProtocol?
 
-        init(onDebug: @escaping (String) -> Void) {
+        init(onEnded: @escaping () -> Void, onDebug: @escaping (String) -> Void) {
+            self.onEnded = onEnded
             self.onDebug = onDebug
+        }
+
+        deinit {
+            if let endObserver {
+                NotificationCenter.default.removeObserver(endObserver)
+            }
         }
 
         func makePlayer(for streamURL: URL) -> AVPlayer {
@@ -153,6 +195,19 @@ struct TVPlayerView: UIViewControllerRepresentable {
         }
 
         private func observe(_ item: AVPlayerItem) {
+            if let endObserver {
+                NotificationCenter.default.removeObserver(endObserver)
+            }
+
+            endObserver = NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemDidPlayToEndTime,
+                object: item,
+                queue: .main
+            ) { [weak self] _ in
+                self?.onDebug("AVPlayerItem reached end")
+                self?.onEnded()
+            }
+
             statusObservation = item.observe(\.status, options: [.new, .initial]) { [weak self] item, _ in
                 Task { @MainActor in
                     switch item.status {
@@ -176,6 +231,45 @@ struct TVPlayerView: UIViewControllerRepresentable {
                     }
                 }
             }
+        }
+    }
+}
+
+private struct PlaybackCompleteOverlay: View {
+    private enum FocusTarget {
+        case replay
+        case back
+    }
+
+    var onReplay: () -> Void
+    var onBack: () -> Void
+    @FocusState private var focusedTarget: FocusTarget?
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.82)
+                .ignoresSafeArea()
+
+            HStack(spacing: 28) {
+                Button(action: onBack) {
+                    Label("Back", systemImage: "chevron.backward")
+                        .frame(width: 220, height: 82)
+                }
+                .buttonStyle(.borderedProminent)
+                .focused($focusedTarget, equals: .back)
+
+                Button(action: onReplay) {
+                    Label("Replay", systemImage: "arrow.counterclockwise")
+                        .frame(width: 220, height: 82)
+                }
+                .buttonStyle(.bordered)
+                .focused($focusedTarget, equals: .replay)
+            }
+            .padding(30)
+            .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8))
+        }
+        .onAppear {
+            focusedTarget = .back
         }
     }
 }

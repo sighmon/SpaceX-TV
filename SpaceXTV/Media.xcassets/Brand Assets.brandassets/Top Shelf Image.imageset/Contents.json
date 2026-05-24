@@ -1,12 +1,12 @@
 {
   "images" : [
     {
-      "filename" : "spacex-tvos-shelf.png",
+      "filename" : "spacex-tvos-shelf-b.png",
       "idiom" : "tv",
       "scale" : "1x"
     },
     {
-      "filename" : "spacex-tvos-shelf@2x.png",
+      "filename" : "spacex-tvos-shelf-b@2x.png",
       "idiom" : "tv",
       "scale" : "2x"
     }

@@ -36,11 +36,14 @@ struct BroadcastBrowserView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 32) {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("", systemImage: "antenna.radiowaves.left.and.right")
-                    .font(.system(size: 56, weight: .semibold))
-                    .symbolRenderingMode(.hierarchical)
+        HStack(alignment: .center, spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                Image("SpaceX")
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(.white)
+                    .frame(width: 140, alignment: .leading)
             }
 
             Spacer(minLength: 32)
@@ -109,7 +112,22 @@ struct BroadcastBrowserView: View {
                     BroadcastCard(broadcast: broadcast, isFocused: focusedID == broadcast.id)
                 }
                 .buttonStyle(.plain)
+                .focusEffectDisabled()
                 .focused($focusedID, equals: broadcast.id)
+                .task {
+                    await library.loadMoreIfNeeded(currentBroadcast: broadcast)
+                }
+            }
+
+            if library.isLoadingMore {
+                HStack(spacing: 14) {
+                    ProgressView()
+                    Text("Loading more broadcasts...")
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 120)
+                .gridCellColumns(2)
             }
         }
     }
@@ -229,10 +247,12 @@ private struct BroadcastCard: View {
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
-            Image(systemName: broadcast.artworkName)
-                .font(.system(size: 76, weight: .semibold))
-                .symbolRenderingMode(.monochrome)
+            Image("SpaceX")
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
                 .foregroundStyle(.white.opacity(0.72))
+                .frame(width: 180, height: 96)
         }
         .frame(maxWidth: .infinity, minHeight: 300)
     }
