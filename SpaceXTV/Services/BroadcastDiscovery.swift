@@ -147,6 +147,7 @@ struct BroadcastDiscovery {
             .compactMap { mediaByKey[$0] }
             ?? []
         let variant = bestVariant(from: media)
+        let thumbnailURL = media.compactMap(\.thumbnailURL).first ?? post.thumbnailURLFromEntities
 
         if let variant {
             report.add("API media variant for \(post.id): \(variant.contentType ?? "unknown") \(variant.bitRate.map(String.init) ?? "adaptive")")
@@ -155,6 +156,7 @@ struct BroadcastDiscovery {
         } else {
             report.add("No API media variant for \(post.id); will page-probe")
         }
+        report.add("Thumbnail for \(post.id): \(thumbnailURL == nil ? "missing" : "present"), media objects \(media.count), URL images \(post.urlImageCount)")
 
         let subtitlePrefix = isPinned ? "Pinned SpaceX status" : "X status"
         return BroadcastCandidate(
@@ -176,7 +178,7 @@ struct BroadcastDiscovery {
             ),
             tweetText: post.text,
             publishedAt: post.createdAt,
-            thumbnailURL: media.compactMap(\.previewImageURL).first,
+            thumbnailURL: thumbnailURL,
             allowsDeferredStreamResolution: linkedBroadcastURL != nil
         )
     }
@@ -258,7 +260,7 @@ struct BroadcastDiscovery {
             URLQueryItem(name: "max_results", value: "100"),
             URLQueryItem(name: "tweet.fields", value: "created_at,entities,attachments"),
             URLQueryItem(name: "expansions", value: "attachments.media_keys"),
-            URLQueryItem(name: "media.fields", value: "type,variants,preview_image_url,width,height,media_key"),
+            URLQueryItem(name: "media.fields", value: "type,variants,preview_image_url,url,width,height,media_key"),
             URLQueryItem(name: "exclude", value: "retweets,replies"),
         ]
 
@@ -283,7 +285,7 @@ struct BroadcastDiscovery {
             URLQueryItem(name: "ids", value: ids.joined(separator: ",")),
             URLQueryItem(name: "tweet.fields", value: "created_at,entities,attachments"),
             URLQueryItem(name: "expansions", value: "attachments.media_keys"),
-            URLQueryItem(name: "media.fields", value: "type,variants,preview_image_url,width,height,media_key"),
+            URLQueryItem(name: "media.fields", value: "type,variants,preview_image_url,url,width,height,media_key"),
         ]
 
         guard let url = components.url else {
@@ -451,6 +453,18 @@ private struct XAPIPost: Decodable {
             }
     }
 
+    var thumbnailURLFromEntities: URL? {
+        entities?.urls?
+            .flatMap { $0.images ?? [] }
+            .sorted { $0.area > $1.area }
+            .compactMap(\.url)
+            .first
+    }
+
+    var urlImageCount: Int {
+        entities?.urls?.reduce(0) { $0 + ($1.images?.count ?? 0) } ?? 0
+    }
+
     var broadcastTitle: String {
         guard let text else {
             return "SpaceX Broadcast"
@@ -481,6 +495,7 @@ private struct XAPIURL: Decodable {
     var url: URL?
     var expandedURL: URL?
     var unwoundURL: URL?
+    var images: [XAPIURLImage]?
 
     var bestURL: URL? {
         unwoundURL ?? expandedURL ?? url
@@ -490,6 +505,7 @@ private struct XAPIURL: Decodable {
         case url
         case expandedURL = "expanded_url"
         case unwoundURL = "unwound_url"
+        case images
     }
 
     init(from decoder: Decoder) throws {
@@ -497,6 +513,7 @@ private struct XAPIURL: Decodable {
         url = Self.decodeURL(forKey: .url, from: container)
         expandedURL = Self.decodeURL(forKey: .expandedURL, from: container)
         unwoundURL = Self.decodeURL(forKey: .unwoundURL, from: container)
+        images = try? container.decodeIfPresent([XAPIURLImage].self, forKey: .images)
     }
 
     private static func decodeURL(forKey key: CodingKeys, from container: KeyedDecodingContainer<CodingKeys>) -> URL? {
@@ -504,6 +521,33 @@ private struct XAPIURL: Decodable {
             return nil
         }
         return URL(string: string)
+    }
+}
+
+private struct XAPIURLImage: Decodable {
+    var url: URL?
+    var width: Int?
+    var height: Int?
+
+    var area: Int {
+        (width ?? 0) * (height ?? 0)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case url
+        case width
+        case height
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let string = try? container.decodeIfPresent(String.self, forKey: .url) {
+            url = URL(string: string)
+        } else {
+            url = nil
+        }
+        width = try? container.decodeIfPresent(Int.self, forKey: .width)
+        height = try? container.decodeIfPresent(Int.self, forKey: .height)
     }
 }
 
@@ -524,14 +568,20 @@ private struct XAPIMedia: Decodable {
     var type: String?
     var variants: [XAPIMediaVariant]?
     var previewImageURL: URL?
+    var url: URL?
     var width: Int?
     var height: Int?
+
+    var thumbnailURL: URL? {
+        previewImageURL ?? url
+    }
 
     enum CodingKeys: String, CodingKey {
         case mediaKey = "media_key"
         case type
         case variants
         case previewImageURL = "preview_image_url"
+        case url
         case width
         case height
     }

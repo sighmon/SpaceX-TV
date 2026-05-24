@@ -31,7 +31,7 @@ final class BroadcastLibrary: ObservableObject {
     private let calendar: Calendar
     private let pageSize = 10
     private let maximumBroadcastLimit = 20
-    private let cacheVersion = 6
+    private let cacheVersion = 8
     private var cachedBroadcasts: [Broadcast] = []
 
     var hasXAPIBearerToken: Bool {
