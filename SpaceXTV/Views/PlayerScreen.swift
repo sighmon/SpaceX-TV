@@ -18,7 +18,7 @@ final class PlayerViewModel: ObservableObject {
         self.broadcast = broadcast
     }
 
-    func start(xAPIBearerToken: String) async {
+    func start() async {
         guard !hasStarted else { return }
         hasStarted = true
         state = .resolving
@@ -27,7 +27,7 @@ final class PlayerViewModel: ObservableObject {
             "Stored stream: \(broadcast.streamURL?.absoluteString ?? "none")",
         ]
         do {
-            let resolved = try await BroadcastResolver(xAPIBearerToken: xAPIBearerToken).resolve(broadcast)
+            let resolved = try await BroadcastResolver().resolve(broadcast)
             debugLines.append("Resolved stream: \(resolved.streamURL.absoluteString)")
             await preflight(resolved.streamURL)
             state = .ready(resolved.streamURL, resolved.title ?? broadcast.title)
@@ -82,7 +82,7 @@ struct PlayerScreen: View {
                 ProgressView("Resolving stream...")
                     .font(.title2)
                     .task {
-                        await model.start(xAPIBearerToken: library.xAPIBearerToken)
+                        await model.start()
                     }
             case .ready(let url, _):
                 ZStack(alignment: .bottomLeading) {

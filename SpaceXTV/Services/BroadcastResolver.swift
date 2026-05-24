@@ -4,7 +4,7 @@ enum BroadcastResolverError: LocalizedError {
     case invalidResponse
     case missingStream
     case missingBroadcastID
-    case missingBearerToken
+    case missingWebBearerToken
 
     var errorDescription: String? {
         switch self {
@@ -14,15 +14,14 @@ enum BroadcastResolverError: LocalizedError {
             "No playable HLS stream was found for this broadcast."
         case .missingBroadcastID:
             "The X broadcast URL did not contain a broadcast ID."
-        case .missingBearerToken:
-            "Add an X API Bearer Token in Settings to resolve this broadcast."
+        case .missingWebBearerToken:
+            "The app could not resolve X web playback credentials for this broadcast."
         }
     }
 }
 
 struct BroadcastResolver {
     var session: URLSession = .shared
-    var xAPIBearerToken: String?
 
     func resolve(_ broadcast: Broadcast) async throws -> ResolvedBroadcast {
         switch broadcast.sourceKind {
@@ -92,9 +91,18 @@ struct BroadcastResolver {
     }
 
     private func xBroadcastStreamURL(broadcastID: String) async throws -> URL {
-        let bearerToken = try bearerToken()
-        let broadcast = try await xBroadcast(broadcastID: broadcastID, bearerToken: bearerToken)
-        let source = try await xLiveVideoSource(mediaKey: broadcast.mediaKey, bearerToken: bearerToken)
+        let webBearerToken = try await xWebBearerToken()
+        let guestToken = try await xGuestToken(bearerToken: webBearerToken)
+        let broadcast = try await xBroadcast(
+            broadcastID: broadcastID,
+            bearerToken: webBearerToken,
+            guestToken: guestToken
+        )
+        let source = try await xLiveVideoSource(
+            mediaKey: broadcast.mediaKey,
+            bearerToken: webBearerToken,
+            guestToken: guestToken
+        )
 
         guard let streamURL = source.noRedirectPlaybackURL ?? source.location else {
             throw BroadcastResolverError.missingStream
@@ -103,7 +111,17 @@ struct BroadcastResolver {
         return try await highestQualityStreamURL(from: streamURL)
     }
 
-    private func xBroadcast(broadcastID: String, bearerToken: String) async throws -> XBroadcast {
+    private func xGuestToken(bearerToken: String) async throws -> String {
+        let url = URL(string: "https://api.x.com/1.1/guest/activate.json")!
+        var request = xWebRequest(url: url, bearerToken: bearerToken)
+        request.httpMethod = "POST"
+
+        let data = try await xAPIData(for: request)
+        let response = try JSONDecoder().decode(XGuestTokenResponse.self, from: data)
+        return response.guestToken
+    }
+
+    private func xBroadcast(broadcastID: String, bearerToken: String, guestToken: String) async throws -> XBroadcast {
         var components = URLComponents(string: "https://api.x.com/1.1/broadcasts/show.json")!
         components.queryItems = [
             URLQueryItem(name: "ids", value: broadcastID),
@@ -113,7 +131,7 @@ struct BroadcastResolver {
             throw BroadcastResolverError.invalidResponse
         }
 
-        let request = xAPIRequest(url: url, bearerToken: bearerToken)
+        let request = xWebRequest(url: url, bearerToken: bearerToken, guestToken: guestToken)
         let data = try await xAPIData(for: request)
         let response = try JSONDecoder().decode(XBroadcastShowResponse.self, from: data)
         guard let broadcast = response.broadcasts[broadcastID] else {
@@ -122,28 +140,101 @@ struct BroadcastResolver {
         return broadcast
     }
 
-    private func xLiveVideoSource(mediaKey: String, bearerToken: String) async throws -> XLiveVideoSource {
+    private func xLiveVideoSource(mediaKey: String, bearerToken: String, guestToken: String) async throws -> XLiveVideoSource {
         let url = URL(string: "https://api.x.com/1.1/live_video_stream/status/\(mediaKey)")!
-        let request = xAPIRequest(url: url, bearerToken: bearerToken)
+        let request = xWebRequest(url: url, bearerToken: bearerToken, guestToken: guestToken)
         let data = try await xAPIData(for: request)
         return try JSONDecoder().decode(XLiveVideoStreamResponse.self, from: data).source
     }
 
-    private func xAPIRequest(url: URL, bearerToken: String) -> URLRequest {
+    private func xWebRequest(url: URL, bearerToken: String, guestToken: String? = nil) -> URLRequest {
         var request = URLRequest(url: url)
         request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+        if let guestToken {
+            request.setValue(guestToken, forHTTPHeaderField: "x-guest-token")
+        }
         request.setValue("en", forHTTPHeaderField: "x-twitter-client-language")
         request.setValue("yes", forHTTPHeaderField: "x-twitter-active-user")
         request.timeoutInterval = 15
         return request
     }
 
-    private func bearerToken() throws -> String {
-        guard let token = xAPIBearerToken?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !token.isEmpty else {
-            throw BroadcastResolverError.missingBearerToken
+    private func xWebBearerToken() async throws -> String {
+        let homeURL = URL(string: "https://x.com/")!
+        let home = try await string(from: homeURL)
+        if let token = webBearerToken(in: home) {
+            return token
         }
-        return token
+
+        let scriptURLs = webScriptURLs(in: home)
+        for scriptURL in scriptURLs.prefix(10) {
+            let script = try await string(from: scriptURL)
+            if let token = webBearerToken(in: script) {
+                return token
+            }
+        }
+
+        throw BroadcastResolverError.missingWebBearerToken
+    }
+
+    private func string(from url: URL) async throws -> String {
+        var request = URLRequest(url: url)
+        request.setValue("Mozilla/5.0 AppleTV SpaceXTV/1.0", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 15
+
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200 ..< 300).contains(httpResponse.statusCode),
+              let body = String(data: data, encoding: .utf8) else {
+            throw BroadcastResolverError.invalidResponse
+        }
+        return body
+    }
+
+    private func webScriptURLs(in body: String) -> [URL] {
+        let pattern = #"https:\/\/abs\.twimg\.com\/responsive-web\/client-web\/[^"'<>\s]+\.js"#
+        let regex = try? NSRegularExpression(pattern: pattern)
+        let range = NSRange(body.startIndex ..< body.endIndex, in: body)
+        let matches = regex?.matches(in: body, range: range) ?? []
+        var seen = Set<URL>()
+        let urls = matches.compactMap { match -> URL? in
+            guard let range = Range(match.range, in: body),
+                  let url = URL(string: String(body[range])) else {
+                return nil
+            }
+            return seen.insert(url).inserted ? url : nil
+        }
+
+        return urls.sorted { lhs, rhs in
+            let lhsIsMain = lhs.lastPathComponent.hasPrefix("main.")
+            let rhsIsMain = rhs.lastPathComponent.hasPrefix("main.")
+            if lhsIsMain != rhsIsMain {
+                return lhsIsMain
+            }
+            return lhs.absoluteString < rhs.absoluteString
+        }
+    }
+
+    private func webBearerToken(in body: String) -> String? {
+        let patterns = [
+            #"Bearer ([A-Za-z0-9%._-]+)"#,
+            #""(AAAAAAAA[A-Za-z0-9%._-]+)""#,
+        ]
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else {
+                continue
+            }
+            let range = NSRange(body.startIndex ..< body.endIndex, in: body)
+            guard let match = regex.firstMatch(in: body, range: range),
+                  match.numberOfRanges > 1,
+                  let tokenRange = Range(match.range(at: 1), in: body) else {
+                continue
+            }
+            return String(body[tokenRange])
+        }
+
+        return nil
     }
 
     private func xAPIData(for request: URLRequest) async throws -> Data {
@@ -219,6 +310,14 @@ struct BroadcastResolver {
 
 private struct XBroadcastShowResponse: Decodable {
     var broadcasts: [String: XBroadcast]
+}
+
+private struct XGuestTokenResponse: Decodable {
+    var guestToken: String
+
+    enum CodingKeys: String, CodingKey {
+        case guestToken = "guest_token"
+    }
 }
 
 private struct XBroadcast: Decodable {

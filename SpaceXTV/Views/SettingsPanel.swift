@@ -40,7 +40,7 @@ struct SettingsView: View {
                         Label("Refresh Broadcasts", systemImage: "arrow.clockwise")
                     }
 
-                    Text("The token is saved to Keychain and used for X API timeline discovery and stream resolution.")
+                    Text("The token is saved to Keychain and used for X API timeline discovery.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }

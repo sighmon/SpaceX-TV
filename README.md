@@ -13,7 +13,7 @@ The app discovers recent SpaceX broadcast posts, shows them as selectable poster
 - X API timeline discovery with a user-supplied [Bearer Token](https://docs.x.com/x-api/introduction).
 - Home-screen prompt when no X API Bearer Token is configured.
 - SpaceX pinned post discovery, including pinned posts that link to `x.com/i/broadcasts/...`.
-- Playback for live and ended broadcasts by resolving signed stream metadata at play time.
+- Playback for live and ended broadcasts by resolving X web playback metadata at play time.
 - Highest-quality stream selection from available HLS or MP4 variants.
 - First page of 10 broadcasts on launch, then another 10 when scrolling to the end.
 - Daily cache for API discovery responses so app relaunches do not always hit X again.
@@ -39,7 +39,7 @@ The app reads attached media variants and linked broadcast URLs from the returne
 
 Open Settings with the gear icon in the root view.
 
-- `Bearer Token`: [X API Bearer Token](https://docs.x.com/x-api/introduction) for timeline discovery and stream resolution.
+- `Bearer Token`: [X API Bearer Token](https://docs.x.com/x-api/introduction) for timeline discovery.
 - `Player Debug Overlay`: shows AVPlayer status, access log, and error log details while playing.
 
 For simulator testing, the easiest token entry path is usually paste through the simulator keyboard. The token is saved to Keychain and is not hard-coded in the app.
