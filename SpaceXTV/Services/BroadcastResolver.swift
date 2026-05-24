@@ -3,19 +3,23 @@ import Foundation
 enum BroadcastResolverError: LocalizedError {
     case invalidResponse
     case missingStream
+    case missingBroadcastID
 
     var errorDescription: String? {
         switch self {
         case .invalidResponse:
             "The resolver returned a response the app could not understand."
         case .missingStream:
-            "No live HLS stream was found for this broadcast."
+            "No playable HLS stream was found for this broadcast."
+        case .missingBroadcastID:
+            "The X broadcast URL did not contain a broadcast ID."
         }
     }
 }
 
 struct BroadcastResolver {
     var session: URLSession = .shared
+    private let xWebBearerToken = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 
     func resolve(_ broadcast: Broadcast) async throws -> ResolvedBroadcast {
         switch broadcast.sourceKind {
@@ -32,6 +36,10 @@ struct BroadcastResolver {
     }
 
     func streamURL(fromStatusURL statusURL: URL) async throws -> URL {
+        if let broadcastID = xBroadcastID(from: statusURL) {
+            return try await xBroadcastStreamURL(broadcastID: broadcastID)
+        }
+
         var request = URLRequest(url: statusURL)
         request.setValue("Mozilla/5.0 AppleTV SpaceXTV/1.0", forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 15
@@ -67,6 +75,176 @@ struct BroadcastResolver {
             throw BroadcastResolverError.missingStream
         }
 
-        return streamURL
+        return try await highestQualityStreamURL(from: streamURL)
+    }
+
+    private func xBroadcastID(from url: URL) -> String? {
+        let pathComponents = url.pathComponents
+        guard let broadcastsIndex = pathComponents.firstIndex(of: "broadcasts"),
+              pathComponents.indices.contains(pathComponents.index(after: broadcastsIndex)) else {
+            return nil
+        }
+
+        return pathComponents[pathComponents.index(after: broadcastsIndex)]
+    }
+
+    private func xBroadcastStreamURL(broadcastID: String) async throws -> URL {
+        let guestToken = try await xGuestToken(videoID: broadcastID)
+        let broadcast = try await xBroadcast(broadcastID: broadcastID, guestToken: guestToken)
+        let source = try await xLiveVideoSource(mediaKey: broadcast.mediaKey, guestToken: guestToken)
+
+        guard let streamURL = source.noRedirectPlaybackURL ?? source.location else {
+            throw BroadcastResolverError.missingStream
+        }
+
+        return try await highestQualityStreamURL(from: streamURL)
+    }
+
+    private func xGuestToken(videoID: String) async throws -> String {
+        let url = URL(string: "https://api.x.com/1.1/guest/activate.json")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(xWebBearerToken)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 15
+
+        let data = try await xAPIData(for: request)
+        let response = try JSONDecoder().decode(XGuestTokenResponse.self, from: data)
+        return response.guestToken
+    }
+
+    private func xBroadcast(broadcastID: String, guestToken: String) async throws -> XBroadcast {
+        var components = URLComponents(string: "https://api.x.com/1.1/broadcasts/show.json")!
+        components.queryItems = [
+            URLQueryItem(name: "ids", value: broadcastID),
+        ]
+
+        guard let url = components.url else {
+            throw BroadcastResolverError.invalidResponse
+        }
+
+        let request = xWebRequest(url: url, guestToken: guestToken)
+        let data = try await xAPIData(for: request)
+        let response = try JSONDecoder().decode(XBroadcastShowResponse.self, from: data)
+        guard let broadcast = response.broadcasts[broadcastID] else {
+            throw BroadcastResolverError.invalidResponse
+        }
+        return broadcast
+    }
+
+    private func xLiveVideoSource(mediaKey: String, guestToken: String) async throws -> XLiveVideoSource {
+        let url = URL(string: "https://api.x.com/1.1/live_video_stream/status/\(mediaKey)")!
+        let request = xWebRequest(url: url, guestToken: guestToken)
+        let data = try await xAPIData(for: request)
+        return try JSONDecoder().decode(XLiveVideoStreamResponse.self, from: data).source
+    }
+
+    private func xWebRequest(url: URL, guestToken: String) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(xWebBearerToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(guestToken, forHTTPHeaderField: "x-guest-token")
+        request.setValue("en", forHTTPHeaderField: "x-twitter-client-language")
+        request.setValue("yes", forHTTPHeaderField: "x-twitter-active-user")
+        request.timeoutInterval = 15
+        return request
+    }
+
+    private func xAPIData(for request: URLRequest) async throws -> Data {
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200 ..< 300).contains(httpResponse.statusCode) else {
+            throw BroadcastResolverError.invalidResponse
+        }
+        return data
+    }
+
+    private func highestQualityStreamURL(from streamURL: URL) async throws -> URL {
+        var request = URLRequest(url: streamURL)
+        request.setValue("Mozilla/5.0 AppleTV SpaceXTV/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("https://www.periscope.tv/", forHTTPHeaderField: "Referer")
+        request.timeoutInterval = 15
+
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200 ..< 300).contains(httpResponse.statusCode),
+              let playlist = String(data: data, encoding: .utf8) else {
+            return streamURL
+        }
+
+        guard let variant = highestBandwidthVariant(in: playlist, relativeTo: streamURL) else {
+            return streamURL
+        }
+
+        return variant
+    }
+
+    private func highestBandwidthVariant(in playlist: String, relativeTo masterURL: URL) -> URL? {
+        let lines = playlist.components(separatedBy: .newlines)
+        var bestBandwidth = 0
+        var bestURL: URL?
+        var pendingBandwidth: Int?
+
+        for line in lines {
+            if line.hasPrefix("#EXT-X-STREAM-INF:") {
+                pendingBandwidth = bandwidth(from: line)
+                continue
+            }
+
+            guard let bandwidth = pendingBandwidth,
+                  !line.isEmpty,
+                  !line.hasPrefix("#"),
+                  bandwidth > bestBandwidth else {
+                continue
+            }
+
+            bestBandwidth = bandwidth
+            bestURL = URL(string: line, relativeTo: masterURL)?.absoluteURL
+            pendingBandwidth = nil
+        }
+
+        return bestURL
+    }
+
+    private func bandwidth(from streamInfo: String) -> Int? {
+        guard let range = streamInfo.range(of: #"BANDWIDTH=(\d+)"#, options: .regularExpression) else {
+            return nil
+        }
+
+        let value = streamInfo[range]
+            .replacingOccurrences(of: "BANDWIDTH=", with: "")
+        return Int(value)
+    }
+}
+
+private struct XGuestTokenResponse: Decodable {
+    var guestToken: String
+
+    enum CodingKeys: String, CodingKey {
+        case guestToken = "guest_token"
+    }
+}
+
+private struct XBroadcastShowResponse: Decodable {
+    var broadcasts: [String: XBroadcast]
+}
+
+private struct XBroadcast: Decodable {
+    var mediaKey: String
+
+    enum CodingKeys: String, CodingKey {
+        case mediaKey = "media_key"
+    }
+}
+
+private struct XLiveVideoStreamResponse: Decodable {
+    var source: XLiveVideoSource
+}
+
+private struct XLiveVideoSource: Decodable {
+    var location: URL?
+    var noRedirectPlaybackURL: URL?
+
+    enum CodingKeys: String, CodingKey {
+        case location
+        case noRedirectPlaybackURL = "noRedirectPlaybackUrl"
     }
 }

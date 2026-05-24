@@ -30,6 +30,7 @@ final class BroadcastLibrary: ObservableObject {
     private let calendar: Calendar
     private let pageSize = 10
     private let maximumBroadcastLimit = 20
+    private let cacheVersion = 5
     private var cachedBroadcasts: [Broadcast] = []
 
     init(
@@ -125,6 +126,7 @@ final class BroadcastLibrary: ObservableObject {
     private func restoreDailyCache(minimumLimit: Int) -> Bool {
         guard let data = defaults.data(forKey: Keys.dailyCache),
               let cache = try? JSONDecoder().decode(DailyBroadcastCache.self, from: data),
+              cache.version == cacheVersion,
               (cache.requestedLimit ?? 0) >= minimumLimit,
               calendar.isDate(cache.createdAt, inSameDayAs: Date()) else {
             return false
@@ -139,6 +141,7 @@ final class BroadcastLibrary: ObservableObject {
 
     private func saveDailyCache(broadcasts: [Broadcast], debugLines: [String], requestedLimit: Int) {
         let cache = DailyBroadcastCache(
+            version: cacheVersion,
             createdAt: Date(),
             requestedLimit: requestedLimit,
             broadcasts: broadcasts,
@@ -158,6 +161,7 @@ private enum Keys {
 }
 
 private struct DailyBroadcastCache: Codable {
+    var version: Int?
     var createdAt: Date
     var requestedLimit: Int?
     var broadcasts: [Broadcast]

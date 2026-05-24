@@ -54,21 +54,14 @@ struct BroadcastDiscovery {
                 }
 
                 report.add("Found stream for \(statusURL.lastPathComponent)")
-                broadcasts.append(
-                    Broadcast(
-                        title: candidate.title,
-                        subtitle: candidate.subtitle,
-                        sourceURL: statusURL,
-                        sourceKind: .xBroadcast,
-                        streamURL: streamURL,
-                        tweetText: candidate.tweetText,
-                        publishedAt: candidate.publishedAt,
-                        thumbnailURL: candidate.thumbnailURL,
-                        artworkName: "antenna.radiowaves.left.and.right"
-                    )
-                )
+                broadcasts.append(broadcast(from: candidate, streamURL: streamURL))
             } catch {
-                report.add("No stream for \(statusURL.lastPathComponent): \(debugMessage(for: error))")
+                if candidate.allowsDeferredStreamResolution {
+                    report.add("Deferring stream resolution for linked broadcast \(statusURL.lastPathComponent): \(debugMessage(for: error))")
+                    broadcasts.append(broadcast(from: candidate, streamURL: nil))
+                } else {
+                    report.add("No stream for \(statusURL.lastPathComponent): \(debugMessage(for: error))")
+                }
             }
         }
 
@@ -78,6 +71,20 @@ struct BroadcastDiscovery {
 
         report.add("Discovery complete: \(broadcasts.count) broadcasts")
         return BroadcastDiscoveryResult(broadcasts: broadcasts, report: report)
+    }
+
+    private func broadcast(from candidate: BroadcastCandidate, streamURL: URL?) -> Broadcast {
+        Broadcast(
+            title: candidate.title,
+            subtitle: candidate.subtitle,
+            sourceURL: candidate.statusURL,
+            sourceKind: .xBroadcast,
+            streamURL: streamURL,
+            tweetText: candidate.tweetText,
+            publishedAt: candidate.publishedAt,
+            thumbnailURL: candidate.thumbnailURL,
+            artworkName: "antenna.radiowaves.left.and.right"
+        )
     }
 
     private func recentSpaceXBroadcastCandidates(xAPIBearerToken: String?, report: inout DiscoveryReport) async throws -> [BroadcastCandidate] {
@@ -133,40 +140,149 @@ struct BroadcastDiscovery {
 
     private func recentSpaceXBroadcastCandidatesFromAPI(bearerToken: String, report: inout DiscoveryReport) async throws -> [BroadcastCandidate] {
         let user = try await xAPIUser(username: "spacex", bearerToken: bearerToken, report: &report)
+        let pinnedTimeline: XAPITimeline?
+        if let pinnedTweetID = user.pinnedTweetID {
+            report.add("X API pinned SpaceX post: \(pinnedTweetID)")
+            pinnedTimeline = try? await xAPIPosts(ids: [pinnedTweetID], bearerToken: bearerToken, report: &report)
+            if pinnedTimeline == nil {
+                report.add("Pinned post fetch failed; continuing with timeline")
+            }
+        } else {
+            pinnedTimeline = nil
+            report.add("X API returned no pinned SpaceX post")
+        }
+
         let timeline = try await xAPIPosts(userID: user.id, bearerToken: bearerToken, report: &report)
         report.add("X API returned \(timeline.posts.count) SpaceX posts")
         report.add("X API included \(timeline.mediaByKey.count) media objects")
 
-        return timeline.posts.compactMap { post in
-            guard let statusURL = URL(string: "https://x.com/spacex/status/\(post.id)") else {
-                return nil
-            }
+        let pinnedCandidates = pinnedTimeline?.posts.compactMap {
+            candidate(from: $0, mediaByKey: pinnedTimeline?.mediaByKey ?? [:], isPinned: true, report: &report)
+        } ?? []
 
-            let media = post.attachments?.mediaKeys?
-                .compactMap { timeline.mediaByKey[$0] }
-                ?? []
-            let variant = bestVariant(from: media)
-
-            if let variant {
-                report.add("API media variant for \(post.id): \(variant.contentType ?? "unknown") \(variant.bitRate.map(String.init) ?? "adaptive")")
-            } else {
-                report.add("No API media variant for \(post.id); will page-probe")
-            }
-
-            return BroadcastCandidate(
-                statusURL: statusURL,
-                streamURL: variant?.url,
-                title: post.broadcastTitle,
-                subtitle: variant.map { "X API media \($0.contentType ?? "variant")" } ?? "X status \(post.id)",
-                tweetText: post.text,
-                publishedAt: post.createdAt,
-                thumbnailURL: media.compactMap(\.previewImageURL).first
-            )
+        let timelineCandidates = timeline.posts.compactMap {
+            candidate(from: $0, mediaByKey: timeline.mediaByKey, isPinned: false, report: &report)
         }
+
+        return deduplicatedCandidates(pinnedCandidates + timelineCandidates)
+    }
+
+    private func candidate(
+        from post: XAPIPost,
+        mediaByKey: [String: XAPIMedia],
+        isPinned: Bool,
+        report: inout DiscoveryReport
+    ) -> BroadcastCandidate? {
+        guard let statusURL = URL(string: "https://x.com/spacex/status/\(post.id)") else {
+            return nil
+        }
+        let linkedBroadcastURL = post.broadcastURLFromEntities
+
+        let media = post.attachments?.mediaKeys?
+            .compactMap { mediaByKey[$0] }
+            ?? []
+        let variant = bestVariant(from: media)
+
+        if let variant {
+            report.add("API media variant for \(post.id): \(variant.contentType ?? "unknown") \(variant.bitRate.map(String.init) ?? "adaptive")")
+        } else if let linkedBroadcastURL {
+            report.add("Broadcast link for \(post.id): \(linkedBroadcastURL.absoluteString)")
+        } else {
+            report.add("No API media variant for \(post.id); will page-probe")
+        }
+
+        let subtitlePrefix = isPinned ? "Pinned SpaceX status" : "X status"
+        return BroadcastCandidate(
+            statusURL: linkedBroadcastURL ?? statusURL,
+            dedupeKey: candidateDedupeKey(
+                post: post,
+                statusURL: statusURL,
+                linkedBroadcastURL: linkedBroadcastURL,
+                variant: variant
+            ),
+            streamURL: variant?.url,
+            title: post.broadcastTitle,
+            subtitle: candidateSubtitle(
+                postID: post.id,
+                isPinned: isPinned,
+                variant: variant,
+                linkedBroadcastURL: linkedBroadcastURL,
+                fallbackPrefix: subtitlePrefix
+            ),
+            tweetText: post.text,
+            publishedAt: post.createdAt,
+            thumbnailURL: media.compactMap(\.previewImageURL).first,
+            allowsDeferredStreamResolution: linkedBroadcastURL != nil
+        )
+    }
+
+    private func candidateDedupeKey(
+        post: XAPIPost,
+        statusURL: URL,
+        linkedBroadcastURL: URL?,
+        variant: XAPIMediaVariant?
+    ) -> String {
+        if let linkedBroadcastURL,
+           let broadcastID = xBroadcastID(from: linkedBroadcastURL) {
+            return "broadcast:\(broadcastID)"
+        }
+
+        if let variant {
+            return "stream:\(variant.url.absoluteString)"
+        }
+
+        if let normalizedText = post.text?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased(),
+           !normalizedText.isEmpty {
+            return "text:\(normalizedText)"
+        }
+
+        return "status:\(statusURL.absoluteString)"
+    }
+
+    private func xBroadcastID(from url: URL) -> String? {
+        let pathComponents = url.pathComponents
+        guard let broadcastsIndex = pathComponents.firstIndex(of: "broadcasts"),
+              pathComponents.indices.contains(pathComponents.index(after: broadcastsIndex)) else {
+            return nil
+        }
+        return pathComponents[pathComponents.index(after: broadcastsIndex)]
+    }
+
+    private func candidateSubtitle(
+        postID: String,
+        isPinned: Bool,
+        variant: XAPIMediaVariant?,
+        linkedBroadcastURL: URL?,
+        fallbackPrefix: String
+    ) -> String {
+        if let variant {
+            return "\(isPinned ? "Pinned " : "")X API media \(variant.contentType ?? "variant")"
+        }
+
+        if linkedBroadcastURL != nil {
+            return "\(isPinned ? "Pinned " : "")X broadcast link"
+        }
+
+        return "\(fallbackPrefix) \(postID)"
+    }
+
+    private func deduplicatedCandidates(_ candidates: [BroadcastCandidate]) -> [BroadcastCandidate] {
+        var seen = Set<String>()
+        return candidates.filter { seen.insert($0.dedupeKey).inserted }
     }
 
     private func xAPIUser(username: String, bearerToken: String, report: inout DiscoveryReport) async throws -> XAPIUser {
-        let url = URL(string: "https://api.x.com/2/users/by/username/\(username)")!
+        var components = URLComponents(string: "https://api.x.com/2/users/by/username/\(username)")!
+        components.queryItems = [
+            URLQueryItem(name: "user.fields", value: "pinned_tweet_id"),
+        ]
+
+        guard let url = components.url else {
+            throw BroadcastDiscoveryError.invalidResponse
+        }
+
         let data = try await xAPIData(from: url, bearerToken: bearerToken, report: &report)
         return try JSONDecoder().decode(XAPIUserResponse.self, from: data).data
     }
@@ -179,6 +295,30 @@ struct BroadcastDiscovery {
             URLQueryItem(name: "expansions", value: "attachments.media_keys"),
             URLQueryItem(name: "media.fields", value: "type,variants,preview_image_url,width,height,media_key"),
             URLQueryItem(name: "exclude", value: "retweets,replies"),
+        ]
+
+        guard let url = components.url else {
+            throw BroadcastDiscoveryError.invalidResponse
+        }
+
+        let data = try await xAPIData(from: url, bearerToken: bearerToken, report: &report)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let response = try decoder.decode(XAPIPostsResponse.self, from: data)
+        let mediaByKey = Dictionary(
+            uniqueKeysWithValues: (response.includes?.media ?? []).map { ($0.mediaKey, $0) }
+        )
+
+        return XAPITimeline(posts: response.data ?? [], mediaByKey: mediaByKey)
+    }
+
+    private func xAPIPosts(ids: [String], bearerToken: String, report: inout DiscoveryReport) async throws -> XAPITimeline {
+        var components = URLComponents(string: "https://api.x.com/2/tweets")!
+        components.queryItems = [
+            URLQueryItem(name: "ids", value: ids.joined(separator: ",")),
+            URLQueryItem(name: "tweet.fields", value: "created_at,entities,attachments"),
+            URLQueryItem(name: "expansions", value: "attachments.media_keys"),
+            URLQueryItem(name: "media.fields", value: "type,variants,preview_image_url,width,height,media_key"),
         ]
 
         guard let url = components.url else {
@@ -292,12 +432,40 @@ struct BroadcastDiscovery {
 
 private struct BroadcastCandidate {
     var statusURL: URL
+    var dedupeKey: String
     var streamURL: URL?
     var title: String = "SpaceX Broadcast"
     var subtitle: String
     var tweetText: String? = nil
     var publishedAt: Date? = nil
     var thumbnailURL: URL? = nil
+    var allowsDeferredStreamResolution: Bool = false
+
+    init(
+        statusURL: URL,
+        dedupeKey: String? = nil,
+        streamURL: URL?,
+        title: String = "SpaceX Broadcast",
+        subtitle: String,
+        tweetText: String? = nil,
+        publishedAt: Date? = nil,
+        thumbnailURL: URL? = nil,
+        allowsDeferredStreamResolution: Bool = false
+    ) {
+        self.statusURL = statusURL
+        if let dedupeKey, !dedupeKey.isEmpty {
+            self.dedupeKey = dedupeKey
+        } else {
+            self.dedupeKey = "status:\(statusURL.absoluteString)"
+        }
+        self.streamURL = streamURL
+        self.title = title
+        self.subtitle = subtitle
+        self.tweetText = tweetText
+        self.publishedAt = publishedAt
+        self.thumbnailURL = thumbnailURL
+        self.allowsDeferredStreamResolution = allowsDeferredStreamResolution
+    }
 }
 
 struct BroadcastDiscoveryResult {
@@ -331,6 +499,14 @@ private struct XAPIUser: Decodable {
     var id: String
     var username: String?
     var name: String?
+    var pinnedTweetID: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case username
+        case name
+        case pinnedTweetID = "pinned_tweet_id"
+    }
 }
 
 private struct XAPIPostsResponse: Decodable {
@@ -342,7 +518,20 @@ private struct XAPIPost: Decodable {
     var id: String
     var text: String?
     var createdAt: Date?
+    var entities: XAPIPostEntities?
     var attachments: XAPIPostAttachments?
+
+    var broadcastURLFromEntities: URL? {
+        entities?.urls?
+            .compactMap(\.bestURL)
+            .first { url in
+                guard let host = url.host?.lowercased() else {
+                    return false
+                }
+                return (host == "x.com" || host == "twitter.com" || host.hasSuffix(".x.com") || host.hasSuffix(".twitter.com"))
+                    && url.path.hasPrefix("/i/broadcasts/")
+            }
+    }
 
     var broadcastTitle: String {
         guard let text else {
@@ -361,7 +550,42 @@ private struct XAPIPost: Decodable {
         case id
         case text
         case createdAt = "created_at"
+        case entities
         case attachments
+    }
+}
+
+private struct XAPIPostEntities: Decodable {
+    var urls: [XAPIURL]?
+}
+
+private struct XAPIURL: Decodable {
+    var url: URL?
+    var expandedURL: URL?
+    var unwoundURL: URL?
+
+    var bestURL: URL? {
+        unwoundURL ?? expandedURL ?? url
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case url
+        case expandedURL = "expanded_url"
+        case unwoundURL = "unwound_url"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        url = Self.decodeURL(forKey: .url, from: container)
+        expandedURL = Self.decodeURL(forKey: .expandedURL, from: container)
+        unwoundURL = Self.decodeURL(forKey: .unwoundURL, from: container)
+    }
+
+    private static func decodeURL(forKey key: CodingKeys, from container: KeyedDecodingContainer<CodingKeys>) -> URL? {
+        guard let string = try? container.decodeIfPresent(String.self, forKey: key) else {
+            return nil
+        }
+        return URL(string: string)
     }
 }
 
