@@ -4,9 +4,14 @@ Native tvOS SwiftUI app for watching SpaceX broadcasts from X on Apple TV.
 
 The app discovers recent SpaceX broadcast posts, shows them as selectable poster cards, resolves playable X/Periscope streams, and plays them with `AVPlayerViewController`.
 
+<img scr="screenshots/screenshot-1.png" width="45%" /><img scr="screenshots/screenshot-2.png" width="45%" />
+<img scr="screenshots/screenshot-3.png" width="45%" /><img scr="screenshots/screenshot-4.png" width="45%" />
+<img scr="screenshots/screenshot-5.png" width="45%" />
+
 ## Features
 
-- X API timeline discovery with a user-supplied Bearer Token.
+- X API timeline discovery with a user-supplied [Bearer Token](https://docs.x.com/x-api/introduction).
+- Home-screen prompt when no X API Bearer Token is configured.
 - SpaceX pinned post discovery, including pinned posts that link to `x.com/i/broadcasts/...`.
 - Playback for live and ended broadcasts by resolving signed stream metadata at play time.
 - Highest-quality stream selection from available HLS or MP4 variants.
@@ -26,15 +31,15 @@ Discovery prefers X API v2:
 2. `GET /2/tweets` for the pinned post, when one exists
 3. `GET /2/users/{id}/tweets` for recent SpaceX posts
 
-The app reads attached media variants and linked broadcast URLs from the returned posts. Pinned and timeline results are de-duplicated by broadcast ID where possible, then by stream URL, normalized post text, or status URL.
+The app requires a user-supplied X API Bearer Token. Without one, the home screen shows a prompt to add the token in Settings.
 
-If no Bearer Token is configured or the API request fails, the app falls back to fetching `https://x.com/spacex`, extracting SpaceX status IDs, and probing status pages for embedded streams. No static HLS fallback URLs are bundled.
+The app reads attached media variants and linked broadcast URLs from the returned posts. Pinned and timeline results are de-duplicated by broadcast ID where possible, then by stream URL, normalized post text, or status URL. No profile-scraping or static HLS fallback URLs are bundled.
 
 ## Settings
 
 Open Settings with the gear icon in the root view.
 
-- `Bearer Token`: optional X API Bearer Token for timeline discovery.
+- `Bearer Token`: [X API Bearer Token](https://docs.x.com/x-api/introduction) for timeline discovery.
 - `Player Debug Overlay`: shows AVPlayer status, access log, and error log details while playing.
 
 For simulator testing, the easiest token entry path is usually paste through the simulator keyboard or set the saved `UserDefaults` value from a local debug session. The token is not hard-coded in the app.

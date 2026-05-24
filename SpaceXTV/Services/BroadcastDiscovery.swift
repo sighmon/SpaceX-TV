@@ -1,14 +1,17 @@
 import Foundation
 
 enum BroadcastDiscoveryError: LocalizedError {
+    case missingBearerToken
     case noStatusesFound
     case noBroadcastsFound
     case invalidResponse
 
     var errorDescription: String? {
         switch self {
+        case .missingBearerToken:
+            "Add an X API Bearer Token in Settings to load SpaceX broadcasts."
         case .noStatusesFound:
-            "No recent SpaceX status links were found on X."
+            "No recent SpaceX broadcasts were returned by the X API."
         case .noBroadcastsFound:
             "No recent SpaceX statuses with bundled broadcasts were found."
         case .invalidResponse:
@@ -88,54 +91,16 @@ struct BroadcastDiscovery {
     }
 
     private func recentSpaceXBroadcastCandidates(xAPIBearerToken: String?, report: inout DiscoveryReport) async throws -> [BroadcastCandidate] {
-        if let xAPIBearerToken, !xAPIBearerToken.isEmpty {
-            report.add("Using X API for timeline discovery")
-            do {
-                let apiCandidates = try await recentSpaceXBroadcastCandidatesFromAPI(
-                    bearerToken: xAPIBearerToken,
-                    report: &report
-                )
-                if !apiCandidates.isEmpty {
-                    return apiCandidates
-                }
-                report.add("X API returned no statuses; falling back to profile scraping")
-            } catch {
-                report.add("X API discovery failed: \(debugMessage(for: error))")
-                report.add("Falling back to profile scraping")
-            }
-        } else {
+        guard let xAPIBearerToken, !xAPIBearerToken.isEmpty else {
             report.add("No X API Bearer Token configured")
+            throw BroadcastDiscoveryError.missingBearerToken
         }
 
-        let profileURLs = [
-            URL(string: "https://x.com/spacex")!,
-            URL(string: "https://mobile.x.com/spacex")!,
-            URL(string: "https://twitter.com/spacex")!,
-        ]
-
-        var discoveredIDs: [String] = []
-        for profileURL in profileURLs {
-            report.add("Fetching profile: \(profileURL.absoluteString)")
-            do {
-                let ids = try await statusIDs(from: profileURL, report: &report)
-                report.add("Profile yielded \(ids.count) status IDs")
-                discoveredIDs.append(contentsOf: ids)
-            } catch {
-                report.add("Profile fetch failed: \(debugMessage(for: error))")
-            }
-        }
-
-        let uniqueIDs = Array(Set(discoveredIDs))
-            .sorted { lhs, rhs in
-                (UInt64(lhs) ?? 0) > (UInt64(rhs) ?? 0)
-            }
-
-        report.add("Unique status IDs: \(uniqueIDs.count)")
-        return uniqueIDs.compactMap { id in
-            URL(string: "https://x.com/spacex/status/\(id)").map {
-                BroadcastCandidate(statusURL: $0, streamURL: nil, subtitle: "X status \(id)")
-            }
-        }
+        report.add("Using X API for timeline discovery")
+        return try await recentSpaceXBroadcastCandidatesFromAPI(
+            bearerToken: xAPIBearerToken,
+            report: &report
+        )
     }
 
     private func recentSpaceXBroadcastCandidatesFromAPI(bearerToken: String, report: inout DiscoveryReport) async throws -> [BroadcastCandidate] {
@@ -356,53 +321,6 @@ struct BroadcastDiscovery {
         }
 
         return data
-    }
-
-    private func statusIDs(from url: URL, report: inout DiscoveryReport) async throws -> [String] {
-        var request = URLRequest(url: url)
-        request.setValue("Mozilla/5.0 AppleTV SpaceXTV/1.0", forHTTPHeaderField: "User-Agent")
-        request.timeoutInterval = 15
-
-        let (data, response) = try await session.data(for: request)
-        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-        report.add("HTTP \(statusCode), \(data.count) bytes")
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200 ..< 300).contains(httpResponse.statusCode),
-              let body = String(data: data, encoding: .utf8) else {
-            throw BroadcastDiscoveryError.invalidResponse
-        }
-
-        let normalizedBody = body
-            .replacingOccurrences(of: #"\/"#, with: "/")
-            .replacingOccurrences(of: #"\\u002F"#, with: "/")
-            .replacingOccurrences(of: #"\u002F"#, with: "/")
-
-        let patterns = [
-            #"(?:https?:)?//(?:x|twitter)\.com/[Ss]pace[Xx]/status/([0-9]{10,})"#,
-            #"/[Ss]pace[Xx]/status/([0-9]{10,})"#,
-            #""status_id":"([0-9]{10,})""#,
-            #""rest_id":"([0-9]{10,})""#,
-        ]
-
-        var ids: [String] = []
-        for pattern in patterns {
-            let regex = try NSRegularExpression(pattern: pattern)
-            let range = NSRange(normalizedBody.startIndex ..< normalizedBody.endIndex, in: normalizedBody)
-            let matches = regex.matches(in: normalizedBody, range: range)
-            ids.append(
-                contentsOf: matches.compactMap { match in
-                    guard match.numberOfRanges > 1,
-                          let range = Range(match.range(at: 1), in: normalizedBody) else {
-                        return nil
-                    }
-                    return String(normalizedBody[range])
-                }
-            )
-        }
-
-        var seen = Set<String>()
-        return ids.filter { seen.insert($0).inserted }
     }
 
     private func debugMessage(for error: Error) -> String {

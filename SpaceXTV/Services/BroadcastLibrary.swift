@@ -30,8 +30,12 @@ final class BroadcastLibrary: ObservableObject {
     private let calendar: Calendar
     private let pageSize = 10
     private let maximumBroadcastLimit = 20
-    private let cacheVersion = 5
+    private let cacheVersion = 6
     private var cachedBroadcasts: [Broadcast] = []
+
+    var hasXAPIBearerToken: Bool {
+        !xAPIBearerToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     init(
         discovery: BroadcastDiscovery = BroadcastDiscovery(),
@@ -47,6 +51,11 @@ final class BroadcastLibrary: ObservableObject {
     }
 
     func load() async {
+        guard hasXAPIBearerToken else {
+            showMissingTokenState()
+            return
+        }
+
         if restoreDailyCache(minimumLimit: pageSize) {
             return
         }
@@ -54,6 +63,11 @@ final class BroadcastLibrary: ObservableObject {
     }
 
     func refresh() async {
+        guard hasXAPIBearerToken else {
+            showMissingTokenState()
+            return
+        }
+
         loadingState = .loading
         isLoadingMore = false
         debugLines = ["Starting refresh"]
@@ -88,6 +102,10 @@ final class BroadcastLibrary: ObservableObject {
     }
 
     func loadMore() async {
+        guard hasXAPIBearerToken else {
+            showMissingTokenState()
+            return
+        }
         guard !isLoadingMore else { return }
         guard broadcasts.count < maximumBroadcastLimit else { return }
 
@@ -151,6 +169,14 @@ final class BroadcastLibrary: ObservableObject {
         if let data = try? JSONEncoder().encode(cache) {
             defaults.set(data, forKey: Keys.dailyCache)
         }
+    }
+
+    private func showMissingTokenState() {
+        cachedBroadcasts = []
+        broadcasts = []
+        isLoadingMore = false
+        debugLines = ["No X API Bearer Token configured"]
+        loadingState = .failed(BroadcastDiscoveryError.missingBearerToken.errorDescription ?? "Add an X API Bearer Token in Settings.")
     }
 }
 

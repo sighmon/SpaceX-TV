@@ -33,6 +33,9 @@ struct BroadcastBrowserView: View {
             guard case .idle = library.loadingState else { return }
             await library.load()
         }
+        .onChange(of: library.xAPIBearerToken) { _, _ in
+            Task { await library.load() }
+        }
     }
 
     private var header: some View {
@@ -70,29 +73,35 @@ struct BroadcastBrowserView: View {
 
     @ViewBuilder
     private var content: some View {
-        switch library.loadingState {
-        case .idle, .loading:
-            ProgressView("Finding recent broadcasts...")
-                .font(.title2)
-                .frame(maxWidth: .infinity, minHeight: 260, alignment: .center)
-        case .loaded:
-            broadcastGrid
-        case .failed(let message):
-            VStack(alignment: .leading, spacing: 20) {
-                Label("Broadcasts unavailable", systemImage: "exclamationmark.triangle")
-                    .font(.title2.weight(.semibold))
-                Text(message)
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                DebugLogView(lines: library.debugLines)
-                Button {
-                    Task { await library.refresh() }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
+        if !library.hasXAPIBearerToken {
+            MissingTokenView {
+                showsSettings = true
             }
-            .padding(28)
-            .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+        } else {
+            switch library.loadingState {
+            case .idle, .loading:
+                ProgressView("Finding recent broadcasts...")
+                    .font(.title2)
+                    .frame(maxWidth: .infinity, minHeight: 260, alignment: .center)
+            case .loaded:
+                broadcastGrid
+            case .failed(let message):
+                VStack(alignment: .leading, spacing: 20) {
+                    Label("Broadcasts unavailable", systemImage: "exclamationmark.triangle")
+                        .font(.title2.weight(.semibold))
+                    Text(message)
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                    DebugLogView(lines: library.debugLines)
+                    Button {
+                        Task { await library.refresh() }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                }
+                .padding(28)
+                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+            }
         }
     }
 
@@ -129,6 +138,38 @@ struct BroadcastBrowserView: View {
                 .frame(maxWidth: .infinity, minHeight: 120)
                 .gridCellColumns(2)
             }
+        }
+    }
+}
+
+private struct MissingTokenView: View {
+    var openSettings: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Label("Add your X API token", systemImage: "key.fill")
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(.white)
+
+            Text("SpaceX broadcasts are loaded through the X API. Add a Bearer Token in Settings to fetch the latest posts and streams.")
+                .font(.body)
+                .foregroundStyle(.gray)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                openSettings()
+            } label: {
+                Label("Open Settings", systemImage: "gearshape")
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, minHeight: 260, alignment: .leading)
+        .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(.white.opacity(0.14), lineWidth: 1)
         }
     }
 }
