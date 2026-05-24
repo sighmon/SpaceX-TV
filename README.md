@@ -4,9 +4,9 @@ Native tvOS SwiftUI app for watching SpaceX broadcasts from X on Apple TV.
 
 The app discovers recent SpaceX broadcast posts, shows them as selectable poster cards, resolves playable X/Periscope streams, and plays them with `AVPlayerViewController`.
 
-<img scr="screenshots/screenshot-1.png" width="45%" /><img scr="screenshots/screenshot-2.png" width="45%" />
-<img scr="screenshots/screenshot-3.png" width="45%" /><img scr="screenshots/screenshot-4.png" width="45%" />
-<img scr="screenshots/screenshot-5.png" width="45%" />
+<img src="screenshots/screenshot-1.png" width="45%" /><img src="screenshots/screenshot-2.png" width="45%" />
+<img src="screenshots/screenshot-3.png" width="45%" /><img src="screenshots/screenshot-4.png" width="45%" />
+<img src="screenshots/screenshot-5.png" width="45%" />
 
 ## Features
 
