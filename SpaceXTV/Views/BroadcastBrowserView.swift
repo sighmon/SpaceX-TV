@@ -260,22 +260,7 @@ private struct BroadcastCard: View {
     @ViewBuilder
     private var background: some View {
         if let thumbnailURL = broadcast.thumbnailURL {
-            AsyncImage(url: thumbnailURL) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .scaledToFill()
-                case .failure:
-                    fallbackBackground
-                case .empty:
-                    fallbackBackground
-                @unknown default:
-                    fallbackBackground
-                }
-            }
-            .frame(maxWidth: .infinity, minHeight: 300)
-            .clipped()
+            RemoteThumbnailImage(url: thumbnailURL, fallback: fallbackBackground)
         } else {
             fallbackBackground
         }
@@ -304,5 +289,132 @@ private struct BroadcastCard: View {
             .filter { !$0.hasPrefix("http://") && !$0.hasPrefix("https://") }
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+private struct RemoteThumbnailImage<Fallback: View>: View {
+    var url: URL
+    var fallback: Fallback
+    @StateObject private var loader = ThumbnailImageLoader()
+
+    var body: some View {
+        ZStack {
+            if let image = loader.image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                fallback
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 300)
+        .clipped()
+        .task(id: url) {
+            await loader.load(url)
+        }
+    }
+}
+
+@MainActor
+private final class ThumbnailImageLoader: ObservableObject {
+    @Published var image: UIImage?
+    private var loadedURL: URL?
+
+    func load(_ url: URL) async {
+        guard loadedURL != url || image == nil else { return }
+        image = nil
+
+        let urls = candidateURLs(for: url)
+        for candidateURL in urls {
+            if await loadImage(candidateURL) {
+                loadedURL = url
+                return
+            }
+
+            guard !Task.isCancelled else {
+                return
+            }
+        }
+    }
+
+    private func loadImage(_ url: URL) async -> Bool {
+        do {
+            var request = URLRequest(url: url)
+            request.setValue("Mozilla/5.0 AppleTV SpaceXTV/1.0", forHTTPHeaderField: "User-Agent")
+            request.setValue("image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+            request.timeoutInterval = 15
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            guard (200 ..< 300).contains(statusCode) else {
+                print("[SpaceXTV] Thumbnail HTTP \(statusCode): \(url.absoluteString)")
+                return false
+            }
+            guard let decodedImage = UIImage(data: data) else {
+                print("[SpaceXTV] Thumbnail decode failed, \(data.count) bytes: \(url.absoluteString)")
+                return false
+            }
+            image = decodedImage
+            print("[SpaceXTV] Thumbnail loaded: \(url.absoluteString)")
+            return true
+        } catch {
+            print("[SpaceXTV] Thumbnail load failed: \(error.localizedDescription) \(url.absoluteString)")
+            return false
+        }
+    }
+
+    private func candidateURLs(for url: URL) -> [URL] {
+        var urls: [URL] = []
+        func append(_ nextURL: URL?) {
+            guard let nextURL, !urls.contains(nextURL) else { return }
+            urls.append(nextURL)
+        }
+
+        append(url)
+        guard url.host?.lowercased().hasSuffix("twimg.com") == true,
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return urls
+        }
+
+        let originalName = components.queryItems?.first { $0.name == "name" }?.value
+        let originalFormat = components.queryItems?.first { $0.name == "format" }?.value
+        let names = [originalName, "4096x4096", "orig", "large", "medium", "small"]
+            .compactMap { $0 }
+        let formats = [originalFormat, "jpg", "png", "webp"]
+            .compactMap { $0 }
+
+        for name in names {
+            append(thumbnailURL(updating: components, name: name, format: nil))
+            for format in formats {
+                append(thumbnailURL(updating: components, name: name, format: format))
+            }
+        }
+
+        var noQueryComponents = components
+        noQueryComponents.queryItems = nil
+        append(noQueryComponents.url)
+
+        return urls
+    }
+
+    private func thumbnailURL(updating components: URLComponents, name: String, format: String?) -> URL? {
+        var nextComponents = components
+        var queryItems = nextComponents.queryItems ?? []
+        if let index = queryItems.firstIndex(where: { $0.name == "name" }) {
+            queryItems[index].value = name
+        } else {
+            queryItems.append(URLQueryItem(name: "name", value: name))
+        }
+
+        if let format {
+            if let index = queryItems.firstIndex(where: { $0.name == "format" }) {
+                queryItems[index].value = format
+            } else {
+                queryItems.append(URLQueryItem(name: "format", value: format))
+            }
+        }
+
+        nextComponents.queryItems = queryItems
+        return nextComponents.url
     }
 }

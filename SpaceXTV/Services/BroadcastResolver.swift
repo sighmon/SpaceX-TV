@@ -121,12 +121,25 @@ struct BroadcastResolver {
             throw BroadcastResolverError.missingStream
         }
 
+        var thumbnailURL = broadcast.bestThumbnailURL ?? source.thumbnailURL
+        if thumbnailURL == nil {
+            thumbnailURL = try? await broadcastPageThumbnailURL(broadcastID: broadcastID)
+        }
+
         return ResolvedBroadcast(
             title: broadcast.title,
             streamURL: try await highestQualityStreamURL(from: streamURL),
-            thumbnailURL: broadcast.thumbnailURL ?? source.thumbnailURL,
+            thumbnailURL: thumbnailURL,
             isLive: broadcast.isLive
         )
+    }
+
+    private func broadcastPageThumbnailURL(broadcastID: String) async throws -> URL? {
+        guard let url = URL(string: "https://x.com/i/broadcasts/\(broadcastID)") else {
+            return nil
+        }
+        let body = try await string(from: url)
+        return pageThumbnailURL(in: normalizedPageBody(body))
     }
 
     private func xGuestToken(bearerToken: String) async throws -> String {
@@ -331,6 +344,7 @@ struct BroadcastResolver {
             #"<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']og:image(?::secure_url)?["']"#,
             #"<meta[^>]+(?:property|name)=["']twitter:image(?::src)?["'][^>]+content=["']([^"']+)["']"#,
             #"<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']twitter:image(?::src)?["']"#,
+            #""(?:thumbnail_image_original|thumbnail_image|preview_image_url|image_url_original|image_url_large|image_url_medium|image_url|poster_image|posterImage|thumbnailUrl|thumbnail_url)"\s*:\s*"([^"]+)""#,
         ]
 
         for pattern in patterns {
@@ -368,6 +382,19 @@ struct BroadcastResolver {
             .replacingOccurrences(of: "&lt;", with: "<")
             .replacingOccurrences(of: "&gt;", with: ">")
     }
+
+    private func normalizedPageBody(_ body: String) -> String {
+        body
+            .replacingOccurrences(of: #"\/"#, with: "/")
+            .replacingOccurrences(of: #"\\u002F"#, with: "/")
+            .replacingOccurrences(of: #"\u002F"#, with: "/")
+            .replacingOccurrences(of: "%2F", with: "/")
+            .replacingOccurrences(of: "%3A", with: ":")
+            .replacingOccurrences(of: "%3F", with: "?")
+            .replacingOccurrences(of: "%3D", with: "=")
+            .replacingOccurrences(of: "%26", with: "&")
+            .replacingOccurrences(of: "&amp;", with: "&")
+    }
 }
 
 private struct XBroadcastShowResponse: Decodable {
@@ -386,13 +413,28 @@ private struct XBroadcast: Decodable {
     var mediaKey: String
     var title: String?
     var imageURL: URL?
+    var imageURLOriginal: URL?
     var imageURLSmall: URL?
     var imageURLMedium: URL?
     var imageURLLarge: URL?
+    var thumbnailURL: URL?
+    var thumbnailURLSmall: URL?
+    var thumbnailURLMedium: URL?
+    var thumbnailURLLarge: URL?
     var state: String?
 
-    var thumbnailURL: URL? {
-        imageURLLarge ?? imageURLMedium ?? imageURL ?? imageURLSmall
+    var bestThumbnailURL: URL? {
+        [
+            imageURLOriginal,
+            imageURLLarge,
+            imageURLMedium,
+            imageURL,
+            imageURLSmall,
+            thumbnailURLLarge,
+            thumbnailURLMedium,
+            thumbnailURL,
+            thumbnailURLSmall,
+        ].compactMap { $0 }.first
     }
 
     var isLive: Bool? {
@@ -404,9 +446,14 @@ private struct XBroadcast: Decodable {
         case mediaKey = "media_key"
         case title
         case imageURL = "image_url"
+        case imageURLOriginal = "image_url_original"
         case imageURLSmall = "image_url_small"
         case imageURLMedium = "image_url_medium"
         case imageURLLarge = "image_url_large"
+        case thumbnailURL = "thumbnail_url"
+        case thumbnailURLSmall = "thumbnail_url_small"
+        case thumbnailURLMedium = "thumbnail_url_medium"
+        case thumbnailURLLarge = "thumbnail_url_large"
         case state
     }
 }
