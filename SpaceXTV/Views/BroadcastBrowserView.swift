@@ -67,6 +67,7 @@ struct BroadcastBrowserView: View {
                     showsSettings = true
                 } label: {
                     Image(systemName: "gearshape")
+                        .font(.system(size: 30, weight: .semibold))
                         .frame(width: 58, height: 58)
                 }
                 .buttonStyle(.bordered)
@@ -75,6 +76,7 @@ struct BroadcastBrowserView: View {
                     Task { await library.refresh() }
                 } label: {
                     Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 30, weight: .semibold))
                         .frame(width: 58, height: 58)
                 }
                 .buttonStyle(.bordered)
@@ -108,6 +110,7 @@ struct BroadcastBrowserView: View {
                         Task { await library.refresh() }
                     } label: {
                         Label("Refresh", systemImage: "arrow.clockwise")
+                            .font(.title3.weight(.semibold))
                     }
                 }
                 .padding(28)
@@ -200,6 +203,7 @@ private struct MissingTokenView: View {
                 openSettings()
             } label: {
                 Label("Open Settings", systemImage: "gearshape")
+                    .font(.title3.weight(.semibold))
             }
             .buttonStyle(.bordered)
         }
