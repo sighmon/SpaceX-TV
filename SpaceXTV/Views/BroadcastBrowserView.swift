@@ -2,6 +2,7 @@ import SwiftUI
 
 struct BroadcastBrowserView: View {
     @EnvironmentObject private var library: BroadcastLibrary
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Binding var selectedBroadcast: Broadcast?
     @Binding var showsSettings: Bool
     @FocusState private var focusedID: Broadcast.ID?
@@ -19,15 +20,25 @@ struct BroadcastBrowserView: View {
             )
             .ignoresSafeArea()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 42) {
-                    header
-                    content
+            GeometryReader { proxy in
+                let screenWidth = proxy.size.width
+                let horizontalPadding = horizontalPadding(for: screenWidth)
+                let contentWidth = max(0, screenWidth - (horizontalPadding * 2))
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: verticalSpacing(for: screenWidth)) {
+                        header(width: contentWidth)
+                        content(width: contentWidth)
+                    }
+                    .frame(width: contentWidth, alignment: .leading)
+                    .padding(.horizontal, horizontalPadding)
+                    .padding(.vertical, verticalPadding(for: screenWidth))
                 }
-                .padding(.horizontal, 84)
-                .padding(.vertical, 54)
+                .frame(width: screenWidth)
             }
+            .ignoresSafeArea(edges: .bottom)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         // .navigationTitle("SpaceX Live")
         .task {
             guard case .idle = library.loadingState else { return }
@@ -38,7 +49,7 @@ struct BroadcastBrowserView: View {
         }
     }
 
-    private var header: some View {
+    private func header(width: CGFloat) -> some View {
         HStack(alignment: .center, spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 Image("SpaceX")
@@ -46,7 +57,7 @@ struct BroadcastBrowserView: View {
                     .resizable()
                     .scaledToFit()
                     .foregroundStyle(.white)
-                    .frame(width: 140, alignment: .leading)
+                    .frame(width: logoWidth(for: width), alignment: .leading)
             }
 
             Spacer(minLength: 32)
@@ -72,7 +83,7 @@ struct BroadcastBrowserView: View {
     }
 
     @ViewBuilder
-    private var content: some View {
+    private func content(width: CGFloat) -> some View {
         if !library.hasXAPIBearerToken {
             MissingTokenView {
                 showsSettings = true
@@ -84,7 +95,7 @@ struct BroadcastBrowserView: View {
                     .font(.title2)
                     .frame(maxWidth: .infinity, minHeight: 260, alignment: .center)
             case .loaded:
-                broadcastGrid
+                broadcastGrid(width: width)
             case .failed(let message):
                 VStack(alignment: .leading, spacing: 20) {
                     Label("Broadcasts unavailable", systemImage: "exclamationmark.triangle")
@@ -105,14 +116,12 @@ struct BroadcastBrowserView: View {
         }
     }
 
-    private var broadcastGrid: some View {
-        LazyVGrid(
-            columns: [
-                GridItem(.flexible(), spacing: 56),
-                GridItem(.flexible(), spacing: 56),
-            ],
+    private func broadcastGrid(width: CGFloat) -> some View {
+        let columns = gridColumns(for: width)
+        return LazyVGrid(
+            columns: columns,
             alignment: .leading,
-            spacing: 56
+            spacing: gridSpacing(for: width)
         ) {
             ForEach(visibleBroadcasts) { broadcast in
                 Button {
@@ -136,9 +145,39 @@ struct BroadcastBrowserView: View {
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, minHeight: 120)
-                .gridCellColumns(2)
+                .gridCellColumns(columns.count)
             }
         }
+    }
+
+    private func horizontalPadding(for width: CGFloat) -> CGFloat {
+        if horizontalSizeClass == .compact { return 24 }
+        return width < 900 ? 36 : 84
+    }
+
+    private func verticalPadding(for width: CGFloat) -> CGFloat {
+        width < 900 ? 28 : 54
+    }
+
+    private func verticalSpacing(for width: CGFloat) -> CGFloat {
+        width < 900 ? 28 : 42
+    }
+
+    private func gridSpacing(for width: CGFloat) -> CGFloat {
+        width < 900 ? 32 : 56
+    }
+
+    private func gridColumns(for width: CGFloat) -> [GridItem] {
+        let spacing = gridSpacing(for: width)
+        let columnCount = horizontalSizeClass == .regular && width >= 620 ? 2 : 1
+        return Array(
+            repeating: GridItem(.flexible(minimum: 0), spacing: spacing),
+            count: columnCount
+        )
+    }
+
+    private func logoWidth(for width: CGFloat) -> CGFloat {
+        width < 700 ? 112 : 140
     }
 }
 
@@ -197,6 +236,7 @@ private struct DebugLogView: View {
 private struct BroadcastCard: View {
     var broadcast: Broadcast
     var isFocused: Bool
+    private let aspectRatio: CGFloat = 16.0 / 9.0
     private let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
@@ -246,7 +286,8 @@ private struct BroadcastCard: View {
             }
             .padding(26)
         }
-        .frame(maxWidth: .infinity, minHeight: 300, alignment: .bottomLeading)
+        .aspectRatio(aspectRatio, contentMode: .fit)
+        .frame(maxWidth: .infinity, alignment: .bottomLeading)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .background(.white.opacity(isFocused ? 0.20 : 0.08), in: RoundedRectangle(cornerRadius: 8))
         .overlay {
@@ -280,7 +321,7 @@ private struct BroadcastCard: View {
                 .foregroundStyle(.white.opacity(0.72))
                 .frame(width: 180, height: 96)
         }
-        .frame(maxWidth: .infinity, minHeight: 300)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func displayText(from text: String) -> String {
@@ -307,7 +348,7 @@ private struct RemoteThumbnailImage<Fallback: View>: View {
                 fallback
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 300)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipped()
         .task(id: url) {
             await loader.load(url)
