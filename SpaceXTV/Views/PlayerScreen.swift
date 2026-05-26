@@ -372,7 +372,9 @@ private struct PlaybackCompleteOverlay: View {
                 Button(action: onBack) {
                     Label("Back", systemImage: "chevron.backward")
                         .font(.title2.weight(.semibold))
-                        .frame(width: 220, height: 82)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(width: 260, height: 88)
                 }
                 .buttonStyle(.borderedProminent)
                 .focused($focusedTarget, equals: .back)
@@ -380,7 +382,9 @@ private struct PlaybackCompleteOverlay: View {
                 Button(action: onReplay) {
                     Label("Replay", systemImage: "arrow.counterclockwise")
                         .font(.title2.weight(.semibold))
-                        .frame(width: 220, height: 82)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(width: 260, height: 88)
                 }
                 .buttonStyle(.bordered)
                 .focused($focusedTarget, equals: .replay)
