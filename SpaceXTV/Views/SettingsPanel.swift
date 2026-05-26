@@ -38,6 +38,7 @@ struct SettingsView: View {
                         Task { await library.refresh() }
                     } label: {
                         Label("Refresh Broadcasts", systemImage: "arrow.clockwise")
+                            .font(.title3.weight(.semibold))
                     }
 
                     Text("The token is saved to Keychain and used for X API timeline discovery.")

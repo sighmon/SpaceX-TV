@@ -260,7 +260,12 @@ struct BroadcastDiscovery {
         }
 
         let data = try await xAPIData(from: url, bearerToken: bearerToken, report: &report)
-        return try JSONDecoder().decode(XAPIUserResponse.self, from: data).data
+        do {
+            return try JSONDecoder().decode(XAPIUserResponse.self, from: data).data
+        } catch {
+            report.add("X API user decode failed: \(debugMessage(for: error))")
+            throw BroadcastDiscoveryFailure(error: BroadcastDiscoveryError.invalidResponse, report: report)
+        }
     }
 
     private func xAPIPosts(userID: String, bearerToken: String, report: inout DiscoveryReport) async throws -> XAPITimeline {
@@ -278,9 +283,13 @@ struct BroadcastDiscovery {
         }
 
         let data = try await xAPIData(from: url, bearerToken: bearerToken, report: &report)
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let response = try decoder.decode(XAPIPostsResponse.self, from: data)
+        let response: XAPIPostsResponse
+        do {
+            response = try xAPIDecoder().decode(XAPIPostsResponse.self, from: data)
+        } catch {
+            report.add("X API timeline decode failed: \(debugMessage(for: error))")
+            throw BroadcastDiscoveryFailure(error: BroadcastDiscoveryError.invalidResponse, report: report)
+        }
         let mediaByKey = Dictionary(
             uniqueKeysWithValues: (response.includes?.media ?? []).map { ($0.mediaKey, $0) }
         )
@@ -302,9 +311,13 @@ struct BroadcastDiscovery {
         }
 
         let data = try await xAPIData(from: url, bearerToken: bearerToken, report: &report)
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let response = try decoder.decode(XAPIPostsResponse.self, from: data)
+        let response: XAPIPostsResponse
+        do {
+            response = try xAPIDecoder().decode(XAPIPostsResponse.self, from: data)
+        } catch {
+            report.add("X API pinned post decode failed: \(debugMessage(for: error))")
+            throw BroadcastDiscoveryFailure(error: BroadcastDiscoveryError.invalidResponse, report: report)
+        }
         let mediaByKey = Dictionary(
             uniqueKeysWithValues: (response.includes?.media ?? []).map { ($0.mediaKey, $0) }
         )
@@ -334,7 +347,26 @@ struct BroadcastDiscovery {
         return data
     }
 
+    private func xAPIDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let value = try container.decode(String.self)
+            if let date = XAPIDateParser.date(from: value) {
+                return date
+            }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Invalid X API date: \(value)"
+            )
+        }
+        return decoder
+    }
+
     private func debugMessage(for error: Error) -> String {
+        if let decodingError = error as? DecodingError {
+            return decodingError.debugDescription
+        }
         if let localizedError = error as? LocalizedError,
            let description = localizedError.errorDescription {
             return description
@@ -629,5 +661,40 @@ private struct XAPIRequestError: LocalizedError {
 
     var errorDescription: String? {
         message
+    }
+}
+
+private enum XAPIDateParser {
+    private static let fractionalSecondsFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let internetDateTimeFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    static func date(from value: String) -> Date? {
+        fractionalSecondsFormatter.date(from: value) ?? internetDateTimeFormatter.date(from: value)
+    }
+}
+
+private extension DecodingError {
+    var debugDescription: String {
+        switch self {
+        case .typeMismatch(_, let context),
+             .valueNotFound(_, let context),
+             .keyNotFound(_, let context),
+             .dataCorrupted(let context):
+            let path = context.codingPath
+                .map(\.stringValue)
+                .joined(separator: ".")
+            return path.isEmpty ? context.debugDescription : "\(path): \(context.debugDescription)"
+        @unknown default:
+            return localizedDescription
+        }
     }
 }

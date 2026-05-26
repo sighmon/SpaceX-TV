@@ -10,6 +10,7 @@ struct RootView: View {
                 selectedBroadcast: $selectedBroadcast,
                 showsSettings: $showsSettings
             )
+                .toolbar(.hidden, for: .navigationBar)
                 .navigationDestination(item: $selectedBroadcast) { broadcast in
                     PlayerScreen(broadcast: broadcast)
                 }

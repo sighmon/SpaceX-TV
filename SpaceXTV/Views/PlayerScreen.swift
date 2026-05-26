@@ -69,6 +69,9 @@ struct PlayerScreen: View {
     @EnvironmentObject private var library: BroadcastLibrary
     @StateObject private var model: PlayerViewModel
     @State private var showsCompletionOverlay = false
+    @State private var showsPlaybackBackButton = false
+    @State private var isPlaybackPaused = false
+    @State private var backButtonHideTask: Task<Void, Never>?
     @State private var replayRequest = 0
 
     init(broadcast: Broadcast) {
@@ -89,6 +92,17 @@ struct PlayerScreen: View {
                     TVPlayerView(
                         streamURL: url,
                         replayRequest: replayRequest,
+                        onTapped: {
+                            showPlaybackBackButton()
+                        },
+                        onPlaybackPausedChanged: { isPaused in
+                            isPlaybackPaused = isPaused
+                            if isPaused {
+                                showPlaybackBackButton(autoHide: false)
+                            } else {
+                                hidePlaybackBackButtonAfterDelay()
+                            }
+                        },
                         onEnded: {
                             showsCompletionOverlay = true
                         }
@@ -96,6 +110,14 @@ struct PlayerScreen: View {
                         model.appendPlayerDebug(line)
                     }
                     .ignoresSafeArea()
+
+                    if showsPlaybackBackButton || isPlaybackPaused {
+                        playbackBackButton
+                            .padding(.top, 18)
+                            .padding(.leading, 22)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            .transition(.opacity)
+                    }
 
                     if library.showsPlayerDebugOverlay {
                         PlayerDebugOverlay(lines: model.debugLines)
@@ -117,6 +139,9 @@ struct PlayerScreen: View {
                 .padding(60)
             }
         }
+        .toolbar(hidesNavigationBar ? .hidden : .automatic, for: .navigationBar)
+        .animation(.easeOut(duration: 0.18), value: showsPlaybackBackButton)
+        .animation(.easeOut(duration: 0.18), value: isPlaybackPaused)
         .fullScreenCover(isPresented: $showsCompletionOverlay) {
             PlaybackCompleteOverlay(
                 onReplay: {
@@ -130,12 +155,59 @@ struct PlayerScreen: View {
             )
             .preferredColorScheme(.dark)
         }
+        .onDisappear {
+            backButtonHideTask?.cancel()
+        }
+    }
+
+    private var hidesNavigationBar: Bool {
+        if case .ready = model.state {
+            return true
+        }
+        return false
+    }
+
+    private var playbackBackButton: some View {
+        Button {
+            dismiss()
+        } label: {
+            Label("Back", systemImage: "chevron.backward")
+                .labelStyle(.iconOnly)
+                .font(.system(size: 30, weight: .semibold))
+                .frame(width: 64, height: 64)
+                .background(.black.opacity(0.58), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white)
+        .accessibilityLabel("Back")
+    }
+
+    private func showPlaybackBackButton(autoHide: Bool = true) {
+        showsPlaybackBackButton = true
+        backButtonHideTask?.cancel()
+        guard autoHide else { return }
+        hidePlaybackBackButtonAfterDelay()
+    }
+
+    private func hidePlaybackBackButtonAfterDelay() {
+        backButtonHideTask?.cancel()
+        backButtonHideTask = Task {
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                if !isPlaybackPaused {
+                    showsPlaybackBackButton = false
+                }
+            }
+        }
     }
 }
 
 struct TVPlayerView: UIViewControllerRepresentable {
     var streamURL: URL
     var replayRequest: Int
+    var onTapped: () -> Void
+    var onPlaybackPausedChanged: (Bool) -> Void
     var onEnded: () -> Void
     var onDebug: (String) -> Void
 
@@ -143,11 +215,14 @@ struct TVPlayerView: UIViewControllerRepresentable {
         let controller = AVPlayerViewController()
         controller.player = context.coordinator.makePlayer(for: streamURL)
         controller.showsPlaybackControls = true
+        context.coordinator.installTapRecognizer(on: controller.view)
         controller.player?.play()
         return controller
     }
 
     func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
+        context.coordinator.onTapped = onTapped
+        context.coordinator.onPlaybackPausedChanged = onPlaybackPausedChanged
         let currentURL = (controller.player?.currentItem?.asset as? AVURLAsset)?.url
         if context.coordinator.lastReplayRequest != replayRequest {
             context.coordinator.lastReplayRequest = replayRequest
@@ -164,17 +239,33 @@ struct TVPlayerView: UIViewControllerRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onEnded: onEnded, onDebug: onDebug)
+        Coordinator(
+            onTapped: onTapped,
+            onPlaybackPausedChanged: onPlaybackPausedChanged,
+            onEnded: onEnded,
+            onDebug: onDebug
+        )
     }
 
     final class Coordinator: NSObject {
         var lastReplayRequest = 0
+        var onTapped: () -> Void
+        var onPlaybackPausedChanged: (Bool) -> Void
         private let onEnded: () -> Void
         private let onDebug: (String) -> Void
         private var statusObservation: NSKeyValueObservation?
+        private var playbackObservation: NSKeyValueObservation?
         private var endObserver: NSObjectProtocol?
+        private weak var tapRecognizer: UITapGestureRecognizer?
 
-        init(onEnded: @escaping () -> Void, onDebug: @escaping (String) -> Void) {
+        init(
+            onTapped: @escaping () -> Void,
+            onPlaybackPausedChanged: @escaping (Bool) -> Void,
+            onEnded: @escaping () -> Void,
+            onDebug: @escaping (String) -> Void
+        ) {
+            self.onTapped = onTapped
+            self.onPlaybackPausedChanged = onPlaybackPausedChanged
             self.onEnded = onEnded
             self.onDebug = onDebug
         }
@@ -183,6 +274,18 @@ struct TVPlayerView: UIViewControllerRepresentable {
             if let endObserver {
                 NotificationCenter.default.removeObserver(endObserver)
             }
+        }
+
+        func installTapRecognizer(on view: UIView) {
+            guard tapRecognizer == nil else { return }
+            let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleTap))
+            recognizer.cancelsTouchesInView = false
+            view.addGestureRecognizer(recognizer)
+            tapRecognizer = recognizer
+        }
+
+        @objc private func handleTap() {
+            onTapped()
         }
 
         func makePlayer(for streamURL: URL) -> AVPlayer {
@@ -196,7 +299,17 @@ struct TVPlayerView: UIViewControllerRepresentable {
             )
             let item = AVPlayerItem(asset: asset)
             observe(item)
-            return AVPlayer(playerItem: item)
+            let player = AVPlayer(playerItem: item)
+            observe(player)
+            return player
+        }
+
+        private func observe(_ player: AVPlayer) {
+            playbackObservation = player.observe(\.timeControlStatus, options: [.new, .initial]) { [weak self] player, _ in
+                Task { @MainActor in
+                    self?.onPlaybackPausedChanged(player.timeControlStatus == .paused)
+                }
+            }
         }
 
         private func observe(_ item: AVPlayerItem) {
@@ -258,14 +371,20 @@ private struct PlaybackCompleteOverlay: View {
             HStack(spacing: 28) {
                 Button(action: onBack) {
                     Label("Back", systemImage: "chevron.backward")
-                        .frame(width: 220, height: 82)
+                        .font(.title2.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(width: 260, height: 88)
                 }
                 .buttonStyle(.borderedProminent)
                 .focused($focusedTarget, equals: .back)
 
                 Button(action: onReplay) {
                     Label("Replay", systemImage: "arrow.counterclockwise")
-                        .frame(width: 220, height: 82)
+                        .font(.title2.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(width: 260, height: 88)
                 }
                 .buttonStyle(.bordered)
                 .focused($focusedTarget, equals: .replay)
