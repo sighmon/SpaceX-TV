@@ -316,11 +316,7 @@ private struct BroadcastCard: View {
     }
 
     private var primaryTextFont: Font {
-#if os(tvOS)
-        .caption.weight(.medium)
-#else
         .callout.weight(.semibold)
-#endif
     }
 
     @ViewBuilder

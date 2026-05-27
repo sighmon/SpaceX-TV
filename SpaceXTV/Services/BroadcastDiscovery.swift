@@ -181,8 +181,9 @@ struct BroadcastDiscovery {
         let galleryImages = galleryImages(from: media)
         let thumbnailURL = media.compactMap(\.thumbnailURL).first ?? galleryImages.first?.url ?? post.thumbnailURLFromEntities
 
+        logVideoVariants(for: post.id, media: media, selectedVariant: variant, report: &report)
         if let variant {
-            report.add("API media variant for \(post.id): \(variant.contentType ?? "unknown") \(variant.bitRate.map(String.init) ?? "adaptive")")
+            report.add("API media variant for \(post.id): \(variant.debugDescription)")
         } else if let linkedBroadcastURL {
             report.add("Broadcast link for \(post.id): \(linkedBroadcastURL.absoluteString)")
         } else if !galleryImages.isEmpty {
@@ -217,6 +218,33 @@ struct BroadcastDiscovery {
             galleryImages: galleryImages,
             allowsDeferredStreamResolution: linkedBroadcastURL != nil
         )
+    }
+
+    private func logVideoVariants(
+        for postID: String,
+        media: [XAPIMedia],
+        selectedVariant: XAPIMediaVariant?,
+        report: inout DiscoveryReport
+    ) {
+        let variants = media.flatMap { $0.variants ?? [] }
+            .filter { $0.url.scheme?.hasPrefix("http") == true }
+
+        guard !variants.isEmpty else { return }
+
+        let summary = variants
+            .sorted { lhs, rhs in
+                if (lhs.bitRate ?? 0) != (rhs.bitRate ?? 0) {
+                    return (lhs.bitRate ?? 0) > (rhs.bitRate ?? 0)
+                }
+                return lhs.url.absoluteString < rhs.url.absoluteString
+            }
+            .map(\.debugDescription)
+            .joined(separator: " | ")
+
+        report.add("API media variants for \(postID): \(summary)")
+        if let selectedVariant {
+            report.add("Selected media variant for \(postID): \(selectedVariant.debugDescription)")
+        }
     }
 
     private func candidateDedupeKey(
@@ -424,16 +452,21 @@ struct BroadcastDiscovery {
         let variants = media.flatMap { $0.variants ?? [] }
             .filter { $0.url.scheme?.hasPrefix("http") == true }
 
+        let mp4Variants = variants
+            .filter { $0.contentType == "video/mp4" || $0.url.pathExtension == "mp4" }
+            .sorted { ($0.bitRate ?? 0) > ($1.bitRate ?? 0) }
+
+        if let mp4 = mp4Variants.first {
+            return mp4
+        }
+
         if let hls = variants.first(where: { variant in
             variant.contentType == "application/x-mpegURL" || variant.url.pathExtension == "m3u8"
         }) {
             return hls
         }
 
-        return variants
-            .filter { $0.contentType == "video/mp4" || $0.url.pathExtension == "mp4" }
-            .sorted { ($0.bitRate ?? 0) > ($1.bitRate ?? 0) }
-            .first
+        return nil
     }
 }
 
@@ -705,6 +738,13 @@ private struct XAPIMediaVariant: Decodable {
     var bitRate: Int?
     var contentType: String?
     var url: URL
+
+    var debugDescription: String {
+        let bitrate = bitRate.map { "\($0)bps" } ?? "adaptive"
+        let type = contentType ?? url.pathExtension
+        let pathHint = url.pathComponents.suffix(3).joined(separator: "/")
+        return "\(type) \(bitrate) \(pathHint)"
+    }
 
     enum CodingKeys: String, CodingKey {
         case bitRate = "bit_rate"

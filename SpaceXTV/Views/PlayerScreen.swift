@@ -40,6 +40,7 @@ final class PlayerViewModel: ObservableObject {
 
     func appendPlayerDebug(_ line: String) {
         debugLines.append(line)
+        print("[SpaceXTV] \(line)")
     }
 
     private func preflight(_ streamURL: URL) async {
@@ -52,8 +53,12 @@ final class PlayerViewModel: ObservableObject {
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            let httpResponse = response as? HTTPURLResponse
+            let statusCode = httpResponse?.statusCode ?? -1
+            let contentType = httpResponse?.value(forHTTPHeaderField: "Content-Type") ?? "unknown"
+            let contentLength = httpResponse?.value(forHTTPHeaderField: "Content-Length") ?? "unknown"
             debugLines.append("\(isPlaylist ? "HLS" : "Stream") preflight HTTP \(statusCode), \(data.count) bytes")
+            debugLines.append("Preflight headers: type \(contentType), length \(contentLength)")
 
             if isPlaylist, let preview = String(data: data.prefix(120), encoding: .utf8) {
                 debugLines.append("HLS preview: \(preview.replacingOccurrences(of: "\n", with: " "))")
@@ -268,6 +273,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
         private var statusObservation: NSKeyValueObservation?
         private var playbackObservation: NSKeyValueObservation?
         private var endObserver: NSObjectProtocol?
+        private var accessLogObserver: NSObjectProtocol?
         private weak var tapRecognizer: UITapGestureRecognizer?
 
         init(
@@ -286,6 +292,9 @@ struct TVPlayerView: UIViewControllerRepresentable {
             if let endObserver {
                 NotificationCenter.default.removeObserver(endObserver)
             }
+            if let accessLogObserver {
+                NotificationCenter.default.removeObserver(accessLogObserver)
+            }
         }
 
         func installTapRecognizer(on view: UIView) {
@@ -301,6 +310,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
         }
 
         func makePlayer(for streamURL: URL) -> AVPlayer {
+            onDebug("Creating player for: \(streamURL.absoluteString)")
             let headers = [
                 "User-Agent": "Mozilla/5.0 AppleTV SpaceXTV/1.0",
                 "Referer": "https://x.com/",
@@ -315,6 +325,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
             if #available(tvOS 11.0, iOS 11.0, *) {
                 item.preferredMaximumResolution = CGSize(width: 3840, height: 2160)
             }
+            onDebug("Player preferences: peakBitRate \(Int(item.preferredPeakBitRate)), forwardBuffer \(Int(item.preferredForwardBufferDuration))s, maxResolution \(Int(item.preferredMaximumResolution.width))x\(Int(item.preferredMaximumResolution.height))")
             observe(item)
             let player = AVPlayer(playerItem: item)
             observe(player)
@@ -333,6 +344,9 @@ struct TVPlayerView: UIViewControllerRepresentable {
             if let endObserver {
                 NotificationCenter.default.removeObserver(endObserver)
             }
+            if let accessLogObserver {
+                NotificationCenter.default.removeObserver(accessLogObserver)
+            }
 
             endObserver = NotificationCenter.default.addObserver(
                 forName: .AVPlayerItemDidPlayToEndTime,
@@ -341,6 +355,17 @@ struct TVPlayerView: UIViewControllerRepresentable {
             ) { [weak self] _ in
                 self?.onDebug("AVPlayerItem reached end")
                 self?.onEnded()
+            }
+
+            accessLogObserver = NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemNewAccessLogEntry,
+                object: item,
+                queue: .main
+            ) { [weak self, weak item] _ in
+                guard let event = item?.accessLog()?.events.last else { return }
+                self?.onDebug(
+                    "Access log update: indicated \(Int(event.indicatedBitrate)), observed \(Int(event.observedBitrate)), requests \(event.numberOfMediaRequests), bytes \(event.numberOfBytesTransferred), uri \(event.uri ?? "unknown")"
+                )
             }
 
             statusObservation = item.observe(\.status, options: [.new, .initial]) { [weak self] item, _ in
