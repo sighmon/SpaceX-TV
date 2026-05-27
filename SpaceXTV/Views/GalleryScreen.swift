@@ -131,6 +131,7 @@ struct GalleryScreen: View {
         }
 #else
         .contentShape(Rectangle())
+        .statusBarHidden(!showsBackButton)
         .simultaneousGesture(
             TapGesture().onEnded {
                 showBackButtonTemporarily()
@@ -239,7 +240,9 @@ struct GalleryScreen: View {
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                showsBackButton = false
+                withAnimation(.easeOut(duration: 0.18)) {
+                    showsBackButton = false
+                }
             }
         }
     }

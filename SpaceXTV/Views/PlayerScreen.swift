@@ -140,6 +140,9 @@ struct PlayerScreen: View {
             }
         }
         .toolbar(hidesNavigationBar ? .hidden : .automatic, for: .navigationBar)
+#if !os(tvOS)
+        .statusBarHidden(hidesStatusBar)
+#endif
         .animation(.easeOut(duration: 0.18), value: showsPlaybackBackButton)
         .animation(.easeOut(duration: 0.18), value: isPlaybackPaused)
         .fullScreenCover(isPresented: $showsCompletionOverlay) {
@@ -166,6 +169,13 @@ struct PlayerScreen: View {
         }
         return false
     }
+
+#if !os(tvOS)
+    private var hidesStatusBar: Bool {
+        guard case .ready = model.state else { return false }
+        return !showsPlaybackBackButton && !isPlaybackPaused
+    }
+#endif
 
     private var playbackBackButton: some View {
         Button {
@@ -196,7 +206,9 @@ struct PlayerScreen: View {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 if !isPlaybackPaused {
-                    showsPlaybackBackButton = false
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        showsPlaybackBackButton = false
+                    }
                 }
             }
         }
