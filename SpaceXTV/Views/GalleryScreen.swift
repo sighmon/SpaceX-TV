@@ -10,6 +10,9 @@ struct GalleryScreen: View {
     @State private var showsCompletionOverlay = false
     @State private var slideshowTask: Task<Void, Never>?
     @State private var playbackIconHideTask: Task<Void, Never>?
+#else
+    @State private var showsBackButton = true
+    @State private var backButtonHideTask: Task<Void, Never>?
 #endif
 
     var body: some View {
@@ -48,7 +51,7 @@ struct GalleryScreen: View {
                     .transition(.scale.combined(with: .opacity))
             }
 #else
-            VStack(alignment: .leading, spacing: 16) {
+            if showsBackButton {
                 Button {
                     dismiss()
                 } label: {
@@ -61,25 +64,11 @@ struct GalleryScreen: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.white)
                 .accessibilityLabel("Back")
-
-                VStack(alignment: .leading, spacing: 8) {
-                    if let tweetText = gallery.tweetText, !tweetText.isEmpty {
-                        Text(displayText(from: tweetText))
-                            .font(.callout.weight(.medium))
-                            .foregroundStyle(.white)
-                            .lineLimit(3)
-                    }
-
-                    Text(positionText)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.72))
-                }
-                .padding(16)
-                .frame(maxWidth: 620, alignment: .leading)
-                .background(.black.opacity(0.42), in: RoundedRectangle(cornerRadius: 8))
+                .padding(.top, 18)
+                .padding(.leading, 22)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .transition(.opacity)
             }
-            .padding(.top, 18)
-            .padding(.leading, 22)
 #endif
         }
         .toolbar(.hidden, for: .navigationBar)
@@ -89,6 +78,9 @@ struct GalleryScreen: View {
 #endif
         .onAppear {
             selectedImageID = selectedImageID ?? gallery.galleryImages.first?.id
+#if !os(tvOS)
+            showBackButtonTemporarily()
+#endif
         }
 #if os(tvOS)
         .focusable(true)
@@ -125,6 +117,17 @@ struct GalleryScreen: View {
                 }
             )
             .preferredColorScheme(.dark)
+        }
+#else
+        .contentShape(Rectangle())
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                showBackButtonTemporarily()
+            }
+        )
+        .animation(.easeOut(duration: 0.18), value: showsBackButton)
+        .onDisappear {
+            backButtonHideTask?.cancel()
         }
 #endif
     }
@@ -211,13 +214,19 @@ struct GalleryScreen: View {
         return "\(index + 1) of \(gallery.galleryImages.count)"
     }
 
-    private func displayText(from text: String) -> String {
-        text
-            .components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.hasPrefix("http://") && !$0.hasPrefix("https://") }
-            .joined(separator: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+#if !os(tvOS)
+    private func showBackButtonTemporarily() {
+        showsBackButton = true
+        backButtonHideTask?.cancel()
+        backButtonHideTask = Task {
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                showsBackButton = false
+            }
+        }
     }
+#endif
 }
 
 #if os(tvOS)
@@ -269,16 +278,23 @@ private struct GalleryCompleteOverlay: View {
 
 private struct GalleryImagePage: View {
     var image: GalleryImage
+    @State private var baseScale: CGFloat = 1
+    @State private var gestureScale: CGFloat = 1
+#if !os(tvOS)
+    @State private var baseOffset: CGSize = .zero
+    @State private var gestureOffset: CGSize = .zero
+#endif
+
+    private var effectiveScale: CGFloat {
+        min(max(baseScale * gestureScale, 1), 5)
+    }
 
     var body: some View {
         GeometryReader { proxy in
             AsyncImage(url: image.url, transaction: Transaction(animation: .easeOut(duration: 0.18))) { phase in
                 switch phase {
                 case .success(let loadedImage):
-                    loadedImage
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: proxy.size.width, height: proxy.size.height)
+                    imageView(loadedImage, in: proxy.size)
                 case .failure:
                     unavailable
                         .frame(width: proxy.size.width, height: proxy.size.height)
@@ -294,6 +310,149 @@ private struct GalleryImagePage: View {
         .ignoresSafeArea()
         .accessibilityLabel(image.altText ?? "SpaceX image")
     }
+
+    @ViewBuilder
+    private func imageView(_ loadedImage: Image, in viewportSize: CGSize) -> some View {
+        let fittedImage = loadedImage
+            .resizable()
+            .scaledToFit()
+            .scaleEffect(effectiveScale)
+#if !os(tvOS)
+            .offset(clampedCurrentOffset(in: viewportSize))
+#endif
+            .frame(width: viewportSize.width, height: viewportSize.height)
+
+#if os(tvOS)
+        fittedImage
+#else
+        fittedImage
+            .gesture(zoomGesture(in: viewportSize))
+            .simultaneousGesture(
+                panGesture(in: viewportSize),
+                including: effectiveScale > 1 ? .gesture : .none
+            )
+            .simultaneousGesture(doubleTapGesture(in: viewportSize))
+#endif
+    }
+
+#if !os(tvOS)
+    private func zoomGesture(in viewportSize: CGSize) -> some Gesture {
+        MagnificationGesture()
+            .onChanged { value in
+                gestureScale = value
+            }
+            .onEnded { value in
+                baseScale = min(max(baseScale * value, 1), 5)
+                gestureScale = 1
+                baseOffset = clampedOffset(baseOffset, scale: baseScale, in: viewportSize)
+                if baseScale <= 1 {
+                    baseOffset = .zero
+                    gestureOffset = .zero
+                }
+            }
+    }
+
+    private func panGesture(in viewportSize: CGSize) -> some Gesture {
+        DragGesture(minimumDistance: 1)
+            .onChanged { value in
+                guard effectiveScale > 1 else {
+                    gestureOffset = .zero
+                    return
+                }
+                gestureOffset = value.translation
+            }
+            .onEnded { value in
+                guard effectiveScale > 1 else {
+                    baseOffset = .zero
+                    gestureOffset = .zero
+                    return
+                }
+                let proposedOffset = CGSize(
+                    width: baseOffset.width + value.translation.width,
+                    height: baseOffset.height + value.translation.height
+                )
+                baseOffset = clampedOffset(proposedOffset, scale: effectiveScale, in: viewportSize)
+                gestureOffset = .zero
+            }
+    }
+
+    private func doubleTapGesture(in viewportSize: CGSize) -> some Gesture {
+        TapGesture(count: 2)
+            .onEnded {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    if effectiveScale > 1.01 {
+                        baseScale = 1
+                    } else {
+                        baseScale = zoomToFillScale(in: viewportSize)
+                    }
+                    gestureScale = 1
+                    baseOffset = .zero
+                    gestureOffset = .zero
+                }
+            }
+    }
+
+    private func clampedCurrentOffset(in viewportSize: CGSize) -> CGSize {
+        let proposedOffset = CGSize(
+            width: baseOffset.width + gestureOffset.width,
+            height: baseOffset.height + gestureOffset.height
+        )
+        return clampedOffset(proposedOffset, scale: effectiveScale, in: viewportSize)
+    }
+
+    private func clampedOffset(_ offset: CGSize, scale: CGFloat, in viewportSize: CGSize) -> CGSize {
+        guard scale > 1 else { return .zero }
+        let limits = panLimits(scale: scale, in: viewportSize)
+        return CGSize(
+            width: min(max(offset.width, -limits.width), limits.width),
+            height: min(max(offset.height, -limits.height), limits.height)
+        )
+    }
+
+    private func panLimits(scale: CGFloat, in viewportSize: CGSize) -> CGSize {
+        let fittedSize = fittedImageSize(in: viewportSize)
+        return CGSize(
+            width: max(0, (fittedSize.width * scale - viewportSize.width) / 2),
+            height: max(0, (fittedSize.height * scale - viewportSize.height) / 2)
+        )
+    }
+
+    private func zoomToFillScale(in viewportSize: CGSize) -> CGFloat {
+        let fittedSize = fittedImageSize(in: viewportSize)
+        guard fittedSize.width > 0, fittedSize.height > 0 else { return 1 }
+        let scale = max(
+            viewportSize.width / fittedSize.width,
+            viewportSize.height / fittedSize.height
+        )
+        return min(max(scale, 1), 5)
+    }
+
+    private func fittedImageSize(in viewportSize: CGSize) -> CGSize {
+        guard viewportSize.width > 0,
+              viewportSize.height > 0,
+              let width = image.width,
+              let height = image.height,
+              width > 0,
+              height > 0 else {
+            return viewportSize
+        }
+
+        let imageAspectRatio = CGFloat(width) / CGFloat(height)
+        let viewportAspectRatio = viewportSize.width / viewportSize.height
+
+        if imageAspectRatio > viewportAspectRatio {
+            return CGSize(
+                width: viewportSize.width,
+                height: viewportSize.width / imageAspectRatio
+            )
+        } else {
+            return CGSize(
+                width: viewportSize.height * imageAspectRatio,
+                height: viewportSize.height
+            )
+        }
+    }
+#endif
 
     private var unavailable: some View {
         ContentUnavailableView(
