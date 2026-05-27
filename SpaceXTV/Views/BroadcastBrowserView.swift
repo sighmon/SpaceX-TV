@@ -295,12 +295,12 @@ private struct BroadcastCard: View {
             VStack(alignment: .leading, spacing: 7) {
                 if let tweetText = broadcast.tweetText, !tweetText.isEmpty {
                     Text(displayText(from: tweetText))
-                        .font(.caption.weight(.medium))
+                        .font(primaryTextFont)
                         .foregroundStyle(.white)
                         .lineLimit(2)
                 } else {
                     Text(broadcast.subtitle)
-                        .font(.caption.weight(.medium))
+                        .font(primaryTextFont)
                         .foregroundStyle(.white)
                         .lineLimit(1)
                 }
@@ -313,6 +313,14 @@ private struct BroadcastCard: View {
                 .font(.title3.weight(.bold))
                 .foregroundStyle(.white)
         }
+    }
+
+    private var primaryTextFont: Font {
+#if os(tvOS)
+        .caption.weight(.medium)
+#else
+        .callout.weight(.semibold)
+#endif
     }
 
     @ViewBuilder

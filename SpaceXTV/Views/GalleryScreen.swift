@@ -1,4 +1,7 @@
 import SwiftUI
+#if !os(tvOS)
+import UIKit
+#endif
 
 struct GalleryScreen: View {
     @Environment(\.dismiss) private var dismiss
@@ -6,6 +9,7 @@ struct GalleryScreen: View {
     @State private var selectedImageID: GalleryImage.ID?
 #if os(tvOS)
     @State private var isSlideshowPlaying = false
+    @State private var imageDisplayMode: GalleryImageDisplayMode = .fill
     @State private var showsPlaybackIcon = false
     @State private var showsCompletionOverlay = false
     @State private var slideshowTask: Task<Void, Never>?
@@ -29,8 +33,13 @@ struct GalleryScreen: View {
             } else {
                 TabView(selection: $selectedImageID) {
                     ForEach(gallery.galleryImages) { image in
+#if os(tvOS)
+                        GalleryImagePage(image: image, displayMode: imageDisplayMode)
+                            .tag(image.id as GalleryImage.ID?)
+#else
                         GalleryImagePage(image: image)
                             .tag(image.id as GalleryImage.ID?)
+#endif
                     }
                 }
 #if os(tvOS)
@@ -97,6 +106,8 @@ struct GalleryScreen: View {
                 moveSelection(by: -1)
             case .right:
                 moveSelection(by: 1)
+            case .up, .down:
+                toggleImageDisplayMode()
             default:
                 break
             }
@@ -146,6 +157,12 @@ struct GalleryScreen: View {
         let nextIndex = (selectedIndex + offset + gallery.galleryImages.count) % gallery.galleryImages.count
         withAnimation(.easeOut(duration: 0.2)) {
             selectedImageID = gallery.galleryImages[nextIndex].id
+        }
+    }
+
+    private func toggleImageDisplayMode() {
+        withAnimation(.easeOut(duration: 0.18)) {
+            imageDisplayMode = imageDisplayMode == .fill ? .fit : .fill
         }
     }
 
@@ -276,25 +293,24 @@ private struct GalleryCompleteOverlay: View {
 }
 #endif
 
-private struct GalleryImagePage: View {
-    var image: GalleryImage
-    @State private var baseScale: CGFloat = 1
-    @State private var gestureScale: CGFloat = 1
-#if !os(tvOS)
-    @State private var baseOffset: CGSize = .zero
-    @State private var gestureOffset: CGSize = .zero
+#if os(tvOS)
+private enum GalleryImageDisplayMode {
+    case fill
+    case fit
+}
 #endif
 
-    private var effectiveScale: CGFloat {
-        min(max(baseScale * gestureScale, 1), 5)
-    }
+private struct GalleryImagePage: View {
+    var image: GalleryImage
+#if os(tvOS)
+    var displayMode: GalleryImageDisplayMode
 
     var body: some View {
         GeometryReader { proxy in
             AsyncImage(url: image.url, transaction: Transaction(animation: .easeOut(duration: 0.18))) { phase in
                 switch phase {
                 case .success(let loadedImage):
-                    imageView(loadedImage, in: proxy.size)
+                    loadedImageView(loadedImage, size: proxy.size)
                 case .failure:
                     unavailable
                         .frame(width: proxy.size.width, height: proxy.size.height)
@@ -312,145 +328,28 @@ private struct GalleryImagePage: View {
     }
 
     @ViewBuilder
-    private func imageView(_ loadedImage: Image, in viewportSize: CGSize) -> some View {
-        let fittedImage = loadedImage
-            .resizable()
-            .scaledToFit()
-            .scaleEffect(effectiveScale)
-#if !os(tvOS)
-            .offset(clampedCurrentOffset(in: viewportSize))
-#endif
-            .frame(width: viewportSize.width, height: viewportSize.height)
-
-#if os(tvOS)
-        fittedImage
+    private func loadedImageView(_ loadedImage: Image, size: CGSize) -> some View {
+        switch displayMode {
+        case .fill:
+            loadedImage
+                .resizable()
+                .scaledToFill()
+                .frame(width: size.width, height: size.height)
+                .clipped()
+                .ignoresSafeArea()
+        case .fit:
+            loadedImage
+                .resizable()
+                .scaledToFit()
+                .frame(width: size.width, height: size.height)
+                .ignoresSafeArea()
+        }
+    }
 #else
-        fittedImage
-            .gesture(zoomGesture(in: viewportSize))
-            .simultaneousGesture(
-                panGesture(in: viewportSize),
-                including: effectiveScale > 1 ? .gesture : .none
-            )
-            .simultaneousGesture(doubleTapGesture(in: viewportSize))
-#endif
-    }
-
-#if !os(tvOS)
-    private func zoomGesture(in viewportSize: CGSize) -> some Gesture {
-        MagnificationGesture()
-            .onChanged { value in
-                gestureScale = value
-            }
-            .onEnded { value in
-                baseScale = min(max(baseScale * value, 1), 5)
-                gestureScale = 1
-                baseOffset = clampedOffset(baseOffset, scale: baseScale, in: viewportSize)
-                if baseScale <= 1 {
-                    baseOffset = .zero
-                    gestureOffset = .zero
-                }
-            }
-    }
-
-    private func panGesture(in viewportSize: CGSize) -> some Gesture {
-        DragGesture(minimumDistance: 1)
-            .onChanged { value in
-                guard effectiveScale > 1 else {
-                    gestureOffset = .zero
-                    return
-                }
-                gestureOffset = value.translation
-            }
-            .onEnded { value in
-                guard effectiveScale > 1 else {
-                    baseOffset = .zero
-                    gestureOffset = .zero
-                    return
-                }
-                let proposedOffset = CGSize(
-                    width: baseOffset.width + value.translation.width,
-                    height: baseOffset.height + value.translation.height
-                )
-                baseOffset = clampedOffset(proposedOffset, scale: effectiveScale, in: viewportSize)
-                gestureOffset = .zero
-            }
-    }
-
-    private func doubleTapGesture(in viewportSize: CGSize) -> some Gesture {
-        TapGesture(count: 2)
-            .onEnded {
-                withAnimation(.easeOut(duration: 0.18)) {
-                    if effectiveScale > 1.01 {
-                        baseScale = 1
-                    } else {
-                        baseScale = zoomToFillScale(in: viewportSize)
-                    }
-                    gestureScale = 1
-                    baseOffset = .zero
-                    gestureOffset = .zero
-                }
-            }
-    }
-
-    private func clampedCurrentOffset(in viewportSize: CGSize) -> CGSize {
-        let proposedOffset = CGSize(
-            width: baseOffset.width + gestureOffset.width,
-            height: baseOffset.height + gestureOffset.height
-        )
-        return clampedOffset(proposedOffset, scale: effectiveScale, in: viewportSize)
-    }
-
-    private func clampedOffset(_ offset: CGSize, scale: CGFloat, in viewportSize: CGSize) -> CGSize {
-        guard scale > 1 else { return .zero }
-        let limits = panLimits(scale: scale, in: viewportSize)
-        return CGSize(
-            width: min(max(offset.width, -limits.width), limits.width),
-            height: min(max(offset.height, -limits.height), limits.height)
-        )
-    }
-
-    private func panLimits(scale: CGFloat, in viewportSize: CGSize) -> CGSize {
-        let fittedSize = fittedImageSize(in: viewportSize)
-        return CGSize(
-            width: max(0, (fittedSize.width * scale - viewportSize.width) / 2),
-            height: max(0, (fittedSize.height * scale - viewportSize.height) / 2)
-        )
-    }
-
-    private func zoomToFillScale(in viewportSize: CGSize) -> CGFloat {
-        let fittedSize = fittedImageSize(in: viewportSize)
-        guard fittedSize.width > 0, fittedSize.height > 0 else { return 1 }
-        let scale = max(
-            viewportSize.width / fittedSize.width,
-            viewportSize.height / fittedSize.height
-        )
-        return min(max(scale, 1), 5)
-    }
-
-    private func fittedImageSize(in viewportSize: CGSize) -> CGSize {
-        guard viewportSize.width > 0,
-              viewportSize.height > 0,
-              let width = image.width,
-              let height = image.height,
-              width > 0,
-              height > 0 else {
-            return viewportSize
-        }
-
-        let imageAspectRatio = CGFloat(width) / CGFloat(height)
-        let viewportAspectRatio = viewportSize.width / viewportSize.height
-
-        if imageAspectRatio > viewportAspectRatio {
-            return CGSize(
-                width: viewportSize.width,
-                height: viewportSize.width / imageAspectRatio
-            )
-        } else {
-            return CGSize(
-                width: viewportSize.height * imageAspectRatio,
-                height: viewportSize.height
-            )
-        }
+    var body: some View {
+        ZoomableRemoteImage(url: image.url)
+            .ignoresSafeArea()
+            .accessibilityLabel(image.altText ?? "SpaceX image")
     }
 #endif
 
@@ -462,3 +361,221 @@ private struct GalleryImagePage: View {
         )
     }
 }
+
+#if !os(tvOS)
+private struct ZoomableRemoteImage: UIViewRepresentable {
+    var url: URL
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> UIScrollView {
+        let scrollView = UIScrollView()
+        scrollView.delegate = context.coordinator
+        scrollView.backgroundColor = .black
+        scrollView.minimumZoomScale = 1
+        scrollView.maximumZoomScale = 5
+        scrollView.bouncesZoom = true
+        scrollView.bounces = false
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.contentInsetAdjustmentBehavior = .never
+        scrollView.decelerationRate = .fast
+        scrollView.delaysContentTouches = false
+        scrollView.panGestureRecognizer.isEnabled = false
+
+        let imageView = UIImageView()
+        imageView.contentMode = .scaleAspectFit
+        imageView.clipsToBounds = true
+        imageView.isUserInteractionEnabled = true
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+
+        scrollView.addSubview(imageView)
+        let imageWidth = imageView.widthAnchor.constraint(equalToConstant: 0)
+        let imageHeight = imageView.heightAnchor.constraint(equalToConstant: 0)
+        NSLayoutConstraint.activate([
+            imageView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            imageView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            imageView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            imageWidth,
+            imageHeight
+        ])
+
+        let doubleTap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleDoubleTap(_:))
+        )
+        doubleTap.numberOfTapsRequired = 2
+        doubleTap.cancelsTouchesInView = false
+        doubleTap.delaysTouchesBegan = false
+        doubleTap.delaysTouchesEnded = false
+        doubleTap.delegate = context.coordinator
+        scrollView.addGestureRecognizer(doubleTap)
+
+        context.coordinator.scrollView = scrollView
+        context.coordinator.imageView = imageView
+        context.coordinator.imageWidthConstraint = imageWidth
+        context.coordinator.imageHeightConstraint = imageHeight
+        context.coordinator.doubleTapRecognizer = doubleTap
+        context.coordinator.loadImage(from: url)
+
+        return scrollView
+    }
+
+    func updateUIView(_ scrollView: UIScrollView, context: Context) {
+        context.coordinator.scrollView = scrollView
+        context.coordinator.updateImageViewSize()
+        if context.coordinator.url != url {
+            scrollView.setZoomScale(1, animated: false)
+            scrollView.contentOffset = .zero
+            scrollView.panGestureRecognizer.isEnabled = false
+            context.coordinator.loadImage(from: url)
+        }
+    }
+
+    final class Coordinator: NSObject, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+        weak var scrollView: UIScrollView?
+        weak var imageView: UIImageView?
+        weak var doubleTapRecognizer: UITapGestureRecognizer?
+        var imageWidthConstraint: NSLayoutConstraint?
+        var imageHeightConstraint: NSLayoutConstraint?
+        var url: URL?
+        private var imageTask: URLSessionDataTask?
+
+        deinit {
+            imageTask?.cancel()
+        }
+
+        func loadImage(from url: URL) {
+            guard self.url != url else { return }
+            self.url = url
+            imageTask?.cancel()
+            imageView?.image = nil
+            updateImageViewSize()
+
+            imageTask = URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+                guard let self,
+                      self.url == url,
+                      let data,
+                      let image = UIImage(data: data) else {
+                    return
+                }
+
+                Task { @MainActor in
+                    guard self.url == url else { return }
+                    self.imageView?.image = image
+                    self.scrollView?.setZoomScale(1, animated: false)
+                    self.updateImageViewSize()
+                    self.centerImage()
+                }
+            }
+            imageTask?.resume()
+        }
+
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+            imageView
+        }
+
+        func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            scrollView.panGestureRecognizer.isEnabled = scrollView.zoomScale > scrollView.minimumZoomScale + 0.01
+            centerImage()
+        }
+
+        @objc func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
+            guard let scrollView else { return }
+
+            if scrollView.zoomScale > scrollView.minimumZoomScale + 0.01 {
+                scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
+                scrollView.panGestureRecognizer.isEnabled = false
+                return
+            }
+
+            let location = recognizer.location(in: imageView)
+            let targetScale = zoomToFillScale(in: scrollView)
+            let zoomRect = zoomRect(for: targetScale, centeredAt: location, in: scrollView)
+            scrollView.zoom(to: zoomRect, animated: true)
+            scrollView.panGestureRecognizer.isEnabled = true
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            gestureRecognizer === doubleTapRecognizer
+        }
+
+        private func zoomToFillScale(in scrollView: UIScrollView) -> CGFloat {
+            let fittedSize = fittedImageSize(in: scrollView.bounds.size)
+            guard fittedSize.width > 0, fittedSize.height > 0 else { return 2 }
+            let scale = max(
+                scrollView.bounds.width / fittedSize.width,
+                scrollView.bounds.height / fittedSize.height
+            )
+            return min(max(scale, scrollView.minimumZoomScale), scrollView.maximumZoomScale)
+        }
+
+        private func zoomRect(for scale: CGFloat, centeredAt center: CGPoint, in scrollView: UIScrollView) -> CGRect {
+            let size = CGSize(
+                width: scrollView.bounds.width / scale,
+                height: scrollView.bounds.height / scale
+            )
+            return CGRect(
+                x: center.x - size.width / 2,
+                y: center.y - size.height / 2,
+                width: size.width,
+                height: size.height
+            )
+        }
+
+        func updateImageViewSize() {
+            guard let scrollView else { return }
+            let fittedSize = fittedImageSize(in: scrollView.bounds.size)
+            imageWidthConstraint?.constant = fittedSize.width
+            imageHeightConstraint?.constant = fittedSize.height
+            scrollView.layoutIfNeeded()
+            centerImage()
+        }
+
+        private func fittedImageSize(in viewportSize: CGSize) -> CGSize {
+            guard viewportSize.width > 0,
+                  viewportSize.height > 0,
+                  let image = imageView?.image,
+                  image.size.width > 0,
+                  image.size.height > 0 else {
+                return viewportSize
+            }
+
+            let imageAspectRatio = image.size.width / image.size.height
+            let viewportAspectRatio = viewportSize.width / viewportSize.height
+
+            if imageAspectRatio > viewportAspectRatio {
+                return CGSize(
+                    width: viewportSize.width,
+                    height: viewportSize.width / imageAspectRatio
+                )
+            } else {
+                return CGSize(
+                    width: viewportSize.height * imageAspectRatio,
+                    height: viewportSize.height
+                )
+            }
+        }
+
+        private func centerImage() {
+            guard let scrollView, let imageView else { return }
+
+            let horizontalInset = max(0, (scrollView.bounds.width - scrollView.contentSize.width) / 2)
+            let verticalInset = max(0, (scrollView.bounds.height - scrollView.contentSize.height) / 2)
+            scrollView.contentInset = UIEdgeInsets(
+                top: verticalInset,
+                left: horizontalInset,
+                bottom: verticalInset,
+                right: horizontalInset
+            )
+            imageView.setNeedsLayout()
+        }
+    }
+}
+#endif
