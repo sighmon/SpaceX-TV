@@ -298,6 +298,11 @@ struct TVPlayerView: UIViewControllerRepresentable {
                 options: ["AVURLAssetHTTPHeaderFieldsKey": headers]
             )
             let item = AVPlayerItem(asset: asset)
+            item.preferredPeakBitRate = 0
+            item.preferredForwardBufferDuration = 8
+            if #available(tvOS 11.0, iOS 11.0, *) {
+                item.preferredMaximumResolution = CGSize(width: 3840, height: 2160)
+            }
             observe(item)
             let player = AVPlayer(playerItem: item)
             observe(player)
