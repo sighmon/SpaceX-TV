@@ -4,6 +4,7 @@ struct BroadcastBrowserView: View {
     @EnvironmentObject private var library: BroadcastLibrary
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Binding var selectedBroadcast: Broadcast?
+    @Binding var selectedGallery: Broadcast?
     @Binding var showsSettings: Bool
     @FocusState private var focusedID: Broadcast.ID?
 
@@ -128,7 +129,12 @@ struct BroadcastBrowserView: View {
         ) {
             ForEach(visibleBroadcasts) { broadcast in
                 Button {
-                    selectedBroadcast = broadcast
+                    switch broadcast.contentKind {
+                    case .video:
+                        selectedBroadcast = broadcast
+                    case .gallery:
+                        selectedGallery = broadcast
+                    }
                 } label: {
                     BroadcastCard(broadcast: broadcast, isFocused: focusedID == broadcast.id)
                 }
@@ -249,57 +255,84 @@ private struct BroadcastCard: View {
     }()
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            background
+        Rectangle()
+            .fill(.clear)
+            .aspectRatio(aspectRatio, contentMode: .fit)
+            .overlay {
+                background
+            }
+            .overlay {
+                LinearGradient(
+                    colors: [
+                        .black.opacity(0.10),
+                        .black.opacity(0.56),
+                        .black.opacity(0.86),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+            .overlay(alignment: .bottomLeading) {
+                cardContent
+                    .padding(.leading, 24)
+                    .padding(.trailing, 24)
+                    .padding(.bottom, 24)
+                    .frame(maxWidth: .infinity, alignment: .bottomLeading)
+            }
+            .frame(maxWidth: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .background(.white.opacity(isFocused ? 0.20 : 0.08), in: RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(.white.opacity(isFocused ? 0.65 : 0.12), lineWidth: isFocused ? 4 : 1)
+            }
+            .scaleEffect(isFocused ? 1.04 : 1)
+            .animation(.easeOut(duration: 0.16), value: isFocused)
+    }
 
-            LinearGradient(
-                colors: [
-                    .black.opacity(0.12),
-                    .black.opacity(0.62),
-                    .black.opacity(0.88),
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-
-            HStack(alignment: .bottom, spacing: 18) {
-                VStack(alignment: .leading, spacing: 8) {
-                    if let tweetText = broadcast.tweetText, !tweetText.isEmpty {
-                        Text(displayText(from: tweetText))
-                            .font(.callout.weight(.medium))
-                            .foregroundStyle(.white)
-                            .lineLimit(4)
-                    } else {
-                        Text(broadcast.subtitle)
-                            .font(.callout.weight(.medium))
-                            .foregroundStyle(.white)
-                            .lineLimit(3)
-                    }
-
-                    if let publishedAt = broadcast.publishedAt {
-                        Text(dateFormatter.string(from: publishedAt))
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(.gray.opacity(0.6))
-                    }
+    private var cardContent: some View {
+        HStack(alignment: .bottom, spacing: 14) {
+            VStack(alignment: .leading, spacing: 7) {
+                if let tweetText = broadcast.tweetText, !tweetText.isEmpty {
+                    Text(displayText(from: tweetText))
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                } else {
+                    Text(broadcast.subtitle)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
                 }
 
-                 Spacer(minLength: 12)
-                 Image(systemName: "play.fill")
-                     .font(.title3.weight(.bold))
-                     .foregroundStyle(.white)
+                metadata
             }
-            .padding(26)
+            .frame(maxWidth: .infinity, alignment: .bottomLeading)
+
+            Image(systemName: broadcast.contentKind == .gallery ? "photo" : "play.fill")
+                .font(.title3.weight(.bold))
+                .foregroundStyle(.white)
         }
-        .aspectRatio(aspectRatio, contentMode: .fit)
-        .frame(maxWidth: .infinity, alignment: .bottomLeading)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .background(.white.opacity(isFocused ? 0.20 : 0.08), in: RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.white.opacity(isFocused ? 0.65 : 0.12), lineWidth: isFocused ? 4 : 1)
+    }
+
+    @ViewBuilder
+    private var metadata: some View {
+        if let publishedAt = broadcast.publishedAt {
+            HStack(spacing: 10) {
+                Text(dateFormatter.string(from: publishedAt))
+                if broadcast.contentKind == .gallery {
+                    Text("\(broadcast.galleryImages.count) photos")
+                }
+            }
+            .lineLimit(1)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.gray.opacity(0.6))
+        } else if broadcast.contentKind == .gallery {
+            Text("\(broadcast.galleryImages.count) photos")
+                .lineLimit(1)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.gray.opacity(0.6))
         }
-        .scaleEffect(isFocused ? 1.04 : 1)
-        .animation(.easeOut(duration: 0.16), value: isFocused)
     }
 
     @ViewBuilder
@@ -348,6 +381,7 @@ private struct RemoteThumbnailImage<Fallback: View>: View {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 fallback
             }

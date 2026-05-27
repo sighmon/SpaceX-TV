@@ -13,7 +13,7 @@ enum BroadcastDiscoveryError: LocalizedError {
         case .noStatusesFound:
             "No recent SpaceX broadcasts were returned by the X API."
         case .noBroadcastsFound:
-            "No recent SpaceX statuses with bundled broadcasts were found."
+            "No recent SpaceX statuses with bundled broadcasts or image galleries were found."
         case .invalidResponse:
             "X returned a response the app could not read."
         }
@@ -28,7 +28,7 @@ struct BroadcastDiscovery {
 
     func discoverRecentSpaceXBroadcasts(limit: Int = 10, xAPIBearerToken: String?) async throws -> BroadcastDiscoveryResult {
         var report = DiscoveryReport()
-        report.add("Starting SpaceX broadcast discovery")
+        report.add("Starting SpaceX post discovery")
 
         let candidates = try await recentSpaceXBroadcastCandidates(
             xAPIBearerToken: xAPIBearerToken,
@@ -44,6 +44,13 @@ struct BroadcastDiscovery {
         for (index, candidate) in candidates.prefix(80).enumerated() {
             guard broadcasts.count < limit else { break }
             let statusURL = candidate.statusURL
+
+            if !candidate.galleryImages.isEmpty, candidate.streamURL == nil, !candidate.allowsDeferredStreamResolution {
+                report.add("Adding gallery \(index + 1): \(statusURL.lastPathComponent), images \(candidate.galleryImages.count)")
+                broadcasts.append(gallery(from: candidate))
+                continue
+            }
+
             report.add("Probing \(index + 1): \(statusURL.lastPathComponent)")
 
             do {
@@ -81,7 +88,7 @@ struct BroadcastDiscovery {
             throw BroadcastDiscoveryFailure(error: BroadcastDiscoveryError.noBroadcastsFound, report: report)
         }
 
-        report.add("Discovery complete: \(broadcasts.count) broadcasts")
+        report.add("Discovery complete: \(broadcasts.count) posts")
         return BroadcastDiscoveryResult(broadcasts: broadcasts, report: report)
     }
 
@@ -96,6 +103,21 @@ struct BroadcastDiscovery {
             publishedAt: candidate.publishedAt,
             thumbnailURL: thumbnailURL ?? candidate.thumbnailURL,
             artworkName: "antenna.radiowaves.left.and.right"
+        )
+    }
+
+    private func gallery(from candidate: BroadcastCandidate) -> Broadcast {
+        Broadcast(
+            title: candidate.title,
+            subtitle: candidate.subtitle,
+            sourceURL: candidate.statusURL,
+            sourceKind: .xBroadcast,
+            contentKind: .gallery,
+            tweetText: candidate.tweetText,
+            publishedAt: candidate.publishedAt,
+            thumbnailURL: candidate.thumbnailURL ?? candidate.galleryImages.first?.url,
+            galleryImages: candidate.galleryImages,
+            artworkName: "photo.on.rectangle"
         )
     }
 
@@ -156,12 +178,15 @@ struct BroadcastDiscovery {
             .compactMap { mediaByKey[$0] }
             ?? []
         let variant = bestVariant(from: media)
-        let thumbnailURL = media.compactMap(\.thumbnailURL).first ?? post.thumbnailURLFromEntities
+        let galleryImages = galleryImages(from: media)
+        let thumbnailURL = media.compactMap(\.thumbnailURL).first ?? galleryImages.first?.url ?? post.thumbnailURLFromEntities
 
         if let variant {
             report.add("API media variant for \(post.id): \(variant.contentType ?? "unknown") \(variant.bitRate.map(String.init) ?? "adaptive")")
         } else if let linkedBroadcastURL {
             report.add("Broadcast link for \(post.id): \(linkedBroadcastURL.absoluteString)")
+        } else if !galleryImages.isEmpty {
+            report.add("Image gallery for \(post.id): \(galleryImages.count) photos")
         } else {
             report.add("No API media variant for \(post.id); will page-probe")
         }
@@ -174,7 +199,8 @@ struct BroadcastDiscovery {
                 post: post,
                 statusURL: statusURL,
                 linkedBroadcastURL: linkedBroadcastURL,
-                variant: variant
+                variant: variant,
+                galleryImages: galleryImages
             ),
             streamURL: variant?.url,
             title: post.broadcastTitle,
@@ -188,6 +214,7 @@ struct BroadcastDiscovery {
             tweetText: post.text,
             publishedAt: post.createdAt,
             thumbnailURL: thumbnailURL,
+            galleryImages: galleryImages,
             allowsDeferredStreamResolution: linkedBroadcastURL != nil
         )
     }
@@ -196,7 +223,8 @@ struct BroadcastDiscovery {
         post: XAPIPost,
         statusURL: URL,
         linkedBroadcastURL: URL?,
-        variant: XAPIMediaVariant?
+        variant: XAPIMediaVariant?,
+        galleryImages: [GalleryImage]
     ) -> String {
         if let linkedBroadcastURL,
            let broadcastID = xBroadcastID(from: linkedBroadcastURL) {
@@ -205,6 +233,10 @@ struct BroadcastDiscovery {
 
         if let variant {
             return "stream:\(variant.url.absoluteString)"
+        }
+
+        if !galleryImages.isEmpty {
+            return "gallery:\(post.id)"
         }
 
         if let normalizedText = post.text?
@@ -244,6 +276,20 @@ struct BroadcastDiscovery {
         return "\(fallbackPrefix) \(postID)"
     }
 
+    private func galleryImages(from media: [XAPIMedia]) -> [GalleryImage] {
+        media
+            .filter { $0.type == "photo" }
+            .compactMap { media in
+                guard let url = media.fullSizePhotoURL else { return nil }
+                return GalleryImage(
+                    url: url,
+                    width: media.width,
+                    height: media.height,
+                    altText: media.altText
+                )
+            }
+    }
+
     private func deduplicatedCandidates(_ candidates: [BroadcastCandidate]) -> [BroadcastCandidate] {
         var seen = Set<String>()
         return candidates.filter { seen.insert($0.dedupeKey).inserted }
@@ -274,7 +320,7 @@ struct BroadcastDiscovery {
             URLQueryItem(name: "max_results", value: "100"),
             URLQueryItem(name: "tweet.fields", value: "created_at,entities,attachments"),
             URLQueryItem(name: "expansions", value: "attachments.media_keys"),
-            URLQueryItem(name: "media.fields", value: "type,variants,preview_image_url,url,width,height,media_key"),
+            URLQueryItem(name: "media.fields", value: "type,variants,preview_image_url,url,width,height,media_key,alt_text"),
             URLQueryItem(name: "exclude", value: "retweets,replies"),
         ]
 
@@ -303,7 +349,7 @@ struct BroadcastDiscovery {
             URLQueryItem(name: "ids", value: ids.joined(separator: ",")),
             URLQueryItem(name: "tweet.fields", value: "created_at,entities,attachments"),
             URLQueryItem(name: "expansions", value: "attachments.media_keys"),
-            URLQueryItem(name: "media.fields", value: "type,variants,preview_image_url,url,width,height,media_key"),
+            URLQueryItem(name: "media.fields", value: "type,variants,preview_image_url,url,width,height,media_key,alt_text"),
         ]
 
         guard let url = components.url else {
@@ -400,6 +446,7 @@ private struct BroadcastCandidate {
     var tweetText: String? = nil
     var publishedAt: Date? = nil
     var thumbnailURL: URL? = nil
+    var galleryImages: [GalleryImage] = []
     var allowsDeferredStreamResolution: Bool = false
 
     init(
@@ -411,6 +458,7 @@ private struct BroadcastCandidate {
         tweetText: String? = nil,
         publishedAt: Date? = nil,
         thumbnailURL: URL? = nil,
+        galleryImages: [GalleryImage] = [],
         allowsDeferredStreamResolution: Bool = false
     ) {
         self.statusURL = statusURL
@@ -425,6 +473,7 @@ private struct BroadcastCandidate {
         self.tweetText = tweetText
         self.publishedAt = publishedAt
         self.thumbnailURL = thumbnailURL
+        self.galleryImages = galleryImages
         self.allowsDeferredStreamResolution = allowsDeferredStreamResolution
     }
 }
@@ -612,9 +661,16 @@ private struct XAPIMedia: Decodable {
     var url: URL?
     var width: Int?
     var height: Int?
+    var altText: String?
 
     var thumbnailURL: URL? {
         previewImageURL ?? url
+    }
+
+    var fullSizePhotoURL: URL? {
+        guard type == "photo" else { return nil }
+        guard let url else { return nil }
+        return Self.photoURL(url, name: "orig") ?? url
     }
 
     enum CodingKeys: String, CodingKey {
@@ -625,6 +681,23 @@ private struct XAPIMedia: Decodable {
         case url
         case width
         case height
+        case altText = "alt_text"
+    }
+
+    private static func photoURL(_ url: URL, name: String) -> URL? {
+        guard url.host?.lowercased().hasSuffix("twimg.com") == true,
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+
+        var queryItems = components.queryItems ?? []
+        if let index = queryItems.firstIndex(where: { $0.name == "name" }) {
+            queryItems[index].value = name
+        } else {
+            queryItems.append(URLQueryItem(name: "name", value: name))
+        }
+        components.queryItems = queryItems
+        return components.url
     }
 }
 
