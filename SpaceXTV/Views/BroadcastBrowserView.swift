@@ -283,8 +283,10 @@ private struct BroadcastCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .background(.white.opacity(isFocused ? 0.20 : 0.08), in: RoundedRectangle(cornerRadius: 8))
             .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(.white.opacity(isFocused ? 0.65 : 0.12), lineWidth: isFocused ? 4 : 1)
+                if isFocused {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(.white.opacity(0.65), lineWidth: 4)
+                }
             }
             .scaleEffect(isFocused ? 1.04 : 1)
             .animation(.easeOut(duration: 0.16), value: isFocused)
