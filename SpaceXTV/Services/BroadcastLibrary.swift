@@ -38,6 +38,10 @@ final class BroadcastLibrary: ObservableObject {
         !xAPIBearerToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    var canLoadMore: Bool {
+        broadcasts.count < maximumBroadcastLimit
+    }
+
     init(
         discovery: BroadcastDiscovery = BroadcastDiscovery(),
         defaults: UserDefaults = .standard,
@@ -106,18 +110,13 @@ final class BroadcastLibrary: ObservableObject {
         }
     }
 
-    func loadMoreIfNeeded(currentBroadcast: Broadcast) async {
-        guard broadcasts.last?.id == currentBroadcast.id else { return }
-        await loadMore()
-    }
-
     func loadMore() async {
         guard hasXAPIBearerToken else {
             showMissingTokenState()
             return
         }
         guard !isLoadingMore else { return }
-        guard broadcasts.count < maximumBroadcastLimit else { return }
+        guard canLoadMore else { return }
 
         isLoadingMore = true
         defer { isLoadingMore = false }
@@ -161,8 +160,9 @@ final class BroadcastLibrary: ObservableObject {
         }
 
         cachedBroadcasts = cache.broadcasts
-        broadcasts = Array(cache.broadcasts.prefix(pageSize))
-        debugLines = ["Loaded \(cache.broadcasts.count) broadcasts from today's cache"] + cache.debugLines
+        let restoredLimit = min(cache.requestedLimit ?? pageSize, maximumBroadcastLimit)
+        broadcasts = Array(cache.broadcasts.prefix(restoredLimit))
+        debugLines = ["Loaded \(broadcasts.count) broadcasts from today's cache"] + cache.debugLines
         loadingState = .loaded
         return true
     }

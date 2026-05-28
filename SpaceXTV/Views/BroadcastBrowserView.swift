@@ -141,19 +141,26 @@ struct BroadcastBrowserView: View {
                 .buttonStyle(.plain)
                 .focusEffectDisabled()
                 .focused($focusedID, equals: broadcast.id)
-                .task {
-                    await library.loadMoreIfNeeded(currentBroadcast: broadcast)
-                }
             }
 
-            if library.isLoadingMore {
-                HStack(spacing: 14) {
-                    ProgressView()
-                    Text("Loading more broadcasts...")
-                        .font(.callout.weight(.medium))
-                        .foregroundStyle(.secondary)
+            if library.canLoadMore {
+                Button {
+                    Task { await library.loadMore() }
+                } label: {
+                    HStack(spacing: 14) {
+                        if library.isLoadingMore {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "plus")
+                                .font(.title3.weight(.semibold))
+                        }
+                        Text(library.isLoadingMore ? "Loading more broadcasts..." : "Load More")
+                            .font(.title3.weight(.semibold))
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 86)
                 }
-                .frame(maxWidth: .infinity, minHeight: 120)
+                .buttonStyle(.bordered)
+                .disabled(library.isLoadingMore)
                 .gridCellColumns(columns.count)
             }
         }
