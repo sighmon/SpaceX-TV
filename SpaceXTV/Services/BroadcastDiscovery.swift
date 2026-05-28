@@ -22,6 +22,10 @@ enum BroadcastDiscoveryError: LocalizedError {
 
 struct BroadcastDiscovery {
     var session: URLSession = .shared
+    private let timelineFetchMultiplier = 2
+    private let minimumTimelineFetchLimit = 25
+    private let maximumTimelineFetchLimit = 100
+
     var resolver: BroadcastResolver {
         BroadcastResolver(session: session)
     }
@@ -29,8 +33,11 @@ struct BroadcastDiscovery {
     func discoverRecentSpaceXBroadcasts(limit: Int = 10, xAPIBearerToken: String?) async throws -> BroadcastDiscoveryResult {
         var report = DiscoveryReport()
         report.add("Starting SpaceX post discovery")
+        let timelineLimit = timelineFetchLimit(for: limit)
+        report.add("X API timeline fetch limit: \(timelineLimit)")
 
         let candidates = try await recentSpaceXBroadcastCandidates(
+            timelineLimit: timelineLimit,
             xAPIBearerToken: xAPIBearerToken,
             report: &report
         )
@@ -121,7 +128,7 @@ struct BroadcastDiscovery {
         )
     }
 
-    private func recentSpaceXBroadcastCandidates(xAPIBearerToken: String?, report: inout DiscoveryReport) async throws -> [BroadcastCandidate] {
+    private func recentSpaceXBroadcastCandidates(timelineLimit: Int, xAPIBearerToken: String?, report: inout DiscoveryReport) async throws -> [BroadcastCandidate] {
         guard let xAPIBearerToken, !xAPIBearerToken.isEmpty else {
             report.add("No X API Bearer Token configured")
             throw BroadcastDiscoveryError.missingBearerToken
@@ -129,12 +136,13 @@ struct BroadcastDiscovery {
 
         report.add("Using X API for timeline discovery")
         return try await recentSpaceXBroadcastCandidatesFromAPI(
+            timelineLimit: timelineLimit,
             bearerToken: xAPIBearerToken,
             report: &report
         )
     }
 
-    private func recentSpaceXBroadcastCandidatesFromAPI(bearerToken: String, report: inout DiscoveryReport) async throws -> [BroadcastCandidate] {
+    private func recentSpaceXBroadcastCandidatesFromAPI(timelineLimit: Int, bearerToken: String, report: inout DiscoveryReport) async throws -> [BroadcastCandidate] {
         let user = try await xAPIUser(username: "spacex", bearerToken: bearerToken, report: &report)
         let pinnedTimeline: XAPITimeline?
         if let pinnedTweetID = user.pinnedTweetID {
@@ -148,7 +156,7 @@ struct BroadcastDiscovery {
             report.add("X API returned no pinned SpaceX post")
         }
 
-        let timeline = try await xAPIPosts(userID: user.id, bearerToken: bearerToken, report: &report)
+        let timeline = try await xAPIPosts(userID: user.id, maxResults: timelineLimit, bearerToken: bearerToken, report: &report)
         report.add("X API returned \(timeline.posts.count) SpaceX posts")
         report.add("X API included \(timeline.mediaByKey.count) media objects")
 
@@ -323,6 +331,13 @@ struct BroadcastDiscovery {
         return candidates.filter { seen.insert($0.dedupeKey).inserted }
     }
 
+    private func timelineFetchLimit(for broadcastLimit: Int) -> Int {
+        min(
+            max(broadcastLimit * timelineFetchMultiplier, minimumTimelineFetchLimit),
+            maximumTimelineFetchLimit
+        )
+    }
+
     private func xAPIUser(username: String, bearerToken: String, report: inout DiscoveryReport) async throws -> XAPIUser {
         var components = URLComponents(string: "https://api.x.com/2/users/by/username/\(username)")!
         components.queryItems = [
@@ -342,10 +357,10 @@ struct BroadcastDiscovery {
         }
     }
 
-    private func xAPIPosts(userID: String, bearerToken: String, report: inout DiscoveryReport) async throws -> XAPITimeline {
+    private func xAPIPosts(userID: String, maxResults: Int, bearerToken: String, report: inout DiscoveryReport) async throws -> XAPITimeline {
         var components = URLComponents(string: "https://api.x.com/2/users/\(userID)/tweets")!
         components.queryItems = [
-            URLQueryItem(name: "max_results", value: "100"),
+            URLQueryItem(name: "max_results", value: "\(maxResults)"),
             URLQueryItem(name: "tweet.fields", value: "created_at,entities,attachments"),
             URLQueryItem(name: "expansions", value: "attachments.media_keys"),
             URLQueryItem(name: "media.fields", value: "type,variants,preview_image_url,url,width,height,media_key,alt_text"),
