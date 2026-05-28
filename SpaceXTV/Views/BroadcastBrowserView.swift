@@ -67,7 +67,7 @@ struct BroadcastBrowserView: View {
                 Button {
                     showsSettings = true
                 } label: {
-                    Image(systemName: "gearshape")
+                    Image(systemName: "gear")
                         .font(.system(size: 30, weight: .semibold))
                         .frame(width: 58, height: 58)
                 }
@@ -208,7 +208,7 @@ private struct MissingTokenView: View {
             Button {
                 openSettings()
             } label: {
-                Label("Open Settings", systemImage: "gearshape")
+                Label("Open Settings", systemImage: "gear")
                     .font(.title3.weight(.semibold))
             }
             .buttonStyle(.bordered)

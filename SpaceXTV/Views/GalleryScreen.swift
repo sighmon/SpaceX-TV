@@ -6,6 +6,7 @@ import UIKit
 struct GalleryScreen: View {
     @Environment(\.dismiss) private var dismiss
     var gallery: Broadcast
+    var onDismiss: (() -> Void)?
     @State private var selectedImageID: GalleryImage.ID?
 #if os(tvOS)
     @State private var isSlideshowPlaying = false
@@ -62,7 +63,7 @@ struct GalleryScreen: View {
 #else
             if showsBackButton {
                 Button {
-                    dismiss()
+                    close()
                 } label: {
                     Label("Back", systemImage: "chevron.backward")
                         .labelStyle(.iconOnly)
@@ -82,6 +83,9 @@ struct GalleryScreen: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .preferredColorScheme(.dark)
+#if !os(tvOS)
+        .ignoresSafeArea(.all)
+#endif
 #if os(tvOS)
         .animation(.easeOut(duration: 0.18), value: showsPlaybackIcon)
 #endif
@@ -120,7 +124,7 @@ struct GalleryScreen: View {
             GalleryCompleteOverlay(
                 onBack: {
                     showsCompletionOverlay = false
-                    dismiss()
+                    close()
                 },
                 onReplay: {
                     showsCompletionOverlay = false
@@ -247,6 +251,14 @@ struct GalleryScreen: View {
         }
     }
 #endif
+
+    private func close() {
+        if let onDismiss {
+            onDismiss()
+        } else {
+            dismiss()
+        }
+    }
 }
 
 #if os(tvOS)
@@ -374,8 +386,11 @@ private struct ZoomableRemoteImage: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UIScrollView {
-        let scrollView = UIScrollView()
+        let scrollView = CenteringScrollView()
         scrollView.delegate = context.coordinator
+        scrollView.onBoundsSizeChanged = { [weak coordinator = context.coordinator] in
+            coordinator?.updateImageViewSize()
+        }
         scrollView.backgroundColor = .black
         scrollView.minimumZoomScale = 1
         scrollView.maximumZoomScale = 5
@@ -392,19 +407,9 @@ private struct ZoomableRemoteImage: UIViewRepresentable {
         imageView.contentMode = .scaleAspectFit
         imageView.clipsToBounds = true
         imageView.isUserInteractionEnabled = true
-        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.translatesAutoresizingMaskIntoConstraints = true
 
         scrollView.addSubview(imageView)
-        let imageWidth = imageView.widthAnchor.constraint(equalToConstant: 0)
-        let imageHeight = imageView.heightAnchor.constraint(equalToConstant: 0)
-        NSLayoutConstraint.activate([
-            imageView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-            imageView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
-            imageView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-            imageView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            imageWidth,
-            imageHeight
-        ])
 
         let doubleTap = UITapGestureRecognizer(
             target: context.coordinator,
@@ -419,8 +424,6 @@ private struct ZoomableRemoteImage: UIViewRepresentable {
 
         context.coordinator.scrollView = scrollView
         context.coordinator.imageView = imageView
-        context.coordinator.imageWidthConstraint = imageWidth
-        context.coordinator.imageHeightConstraint = imageHeight
         context.coordinator.doubleTapRecognizer = doubleTap
         context.coordinator.loadImage(from: url)
 
@@ -442,8 +445,6 @@ private struct ZoomableRemoteImage: UIViewRepresentable {
         weak var scrollView: UIScrollView?
         weak var imageView: UIImageView?
         weak var doubleTapRecognizer: UITapGestureRecognizer?
-        var imageWidthConstraint: NSLayoutConstraint?
-        var imageHeightConstraint: NSLayoutConstraint?
         var url: URL?
         private var imageTask: URLSessionDataTask?
 
@@ -535,9 +536,8 @@ private struct ZoomableRemoteImage: UIViewRepresentable {
         func updateImageViewSize() {
             guard let scrollView else { return }
             let fittedSize = fittedImageSize(in: scrollView.bounds.size)
-            imageWidthConstraint?.constant = fittedSize.width
-            imageHeightConstraint?.constant = fittedSize.height
-            scrollView.layoutIfNeeded()
+            imageView?.frame = CGRect(origin: .zero, size: fittedSize)
+            scrollView.contentSize = fittedSize
             centerImage()
         }
 
@@ -569,15 +569,40 @@ private struct ZoomableRemoteImage: UIViewRepresentable {
         private func centerImage() {
             guard let scrollView, let imageView else { return }
 
-            let horizontalInset = max(0, (scrollView.bounds.width - scrollView.contentSize.width) / 2)
-            let verticalInset = max(0, (scrollView.bounds.height - scrollView.contentSize.height) / 2)
-            scrollView.contentInset = UIEdgeInsets(
-                top: verticalInset,
-                left: horizontalInset,
-                bottom: verticalInset,
-                right: horizontalInset
-            )
+            let boundsSize = scrollView.bounds.size
+            let contentSize = scrollView.contentSize
+            let centerX = contentSize.width < boundsSize.width
+                ? boundsSize.width / 2
+                : contentSize.width / 2
+            let centerY = contentSize.height < boundsSize.height
+                ? boundsSize.height / 2
+                : contentSize.height / 2
+            imageView.center = CGPoint(x: centerX, y: centerY)
+
+            if scrollView.zoomScale <= scrollView.minimumZoomScale + 0.01 {
+                scrollView.contentOffset = .zero
+            } else {
+                scrollView.contentOffset = CGPoint(
+                    x: min(max(scrollView.contentOffset.x, 0), max(0, contentSize.width - boundsSize.width)),
+                    y: min(max(scrollView.contentOffset.y, 0), max(0, contentSize.height - boundsSize.height))
+                )
+            }
+
+            scrollView.contentInset = .zero
             imageView.setNeedsLayout()
+        }
+    }
+
+    final class CenteringScrollView: UIScrollView {
+        var onBoundsSizeChanged: (() -> Void)?
+        private var lastBoundsSize: CGSize = .zero
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+
+            guard bounds.size != lastBoundsSize else { return }
+            lastBoundsSize = bounds.size
+            onBoundsSizeChanged?()
         }
     }
 }
