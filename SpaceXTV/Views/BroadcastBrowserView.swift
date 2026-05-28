@@ -68,7 +68,11 @@ struct BroadcastBrowserView: View {
                     showsSettings = true
                 } label: {
                     Image(systemName: "gear")
+#if os(tvOS)
+                        .font(.system(size: 38, weight: .semibold))
+#else
                         .font(.system(size: 30, weight: .semibold))
+#endif
                         .frame(width: 58, height: 58)
                 }
                 .buttonStyle(.bordered)
@@ -77,7 +81,11 @@ struct BroadcastBrowserView: View {
                     Task { await library.refresh() }
                 } label: {
                     Image(systemName: "arrow.clockwise")
+#if os(tvOS)
+                        .font(.system(size: 38, weight: .semibold))
+#else
                         .font(.system(size: 30, weight: .semibold))
+#endif
                         .frame(width: 58, height: 58)
                 }
                 .buttonStyle(.bordered)
