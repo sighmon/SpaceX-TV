@@ -161,11 +161,11 @@ struct BroadcastDiscovery {
         report.add("X API included \(timeline.mediaByKey.count) media objects")
 
         let pinnedCandidates = pinnedTimeline?.posts.compactMap {
-            candidate(from: $0, mediaByKey: pinnedTimeline?.mediaByKey ?? [:], isPinned: true, report: &report)
+            candidate(from: $0, timeline: pinnedTimeline ?? .empty, isPinned: true, report: &report)
         } ?? []
 
         let timelineCandidates = timeline.posts.compactMap {
-            candidate(from: $0, mediaByKey: timeline.mediaByKey, isPinned: false, report: &report)
+            candidate(from: $0, timeline: timeline, isPinned: false, report: &report)
         }
 
         return deduplicatedCandidates(pinnedCandidates + timelineCandidates)
@@ -173,7 +173,7 @@ struct BroadcastDiscovery {
 
     private func candidate(
         from post: XAPIPost,
-        mediaByKey: [String: XAPIMedia],
+        timeline: XAPITimeline,
         isPinned: Bool,
         report: inout DiscoveryReport
     ) -> BroadcastCandidate? {
@@ -182,22 +182,27 @@ struct BroadcastDiscovery {
         }
         let linkedBroadcastURL = post.broadcastURLFromEntities
 
-        let media = post.attachments?.mediaKeys?
-            .compactMap { mediaByKey[$0] }
-            ?? []
+        let ownMedia = mediaObjects(from: post, mediaByKey: timeline.mediaByKey)
+        let quotedPost = post.quotedTweetID.flatMap { timeline.includedPostsByID[$0] }
+        let quotedMedia = quotedPost.map { mediaObjects(from: $0, mediaByKey: timeline.mediaByKey) } ?? []
+        let media = ownMedia.isEmpty ? quotedMedia : ownMedia
+        let mediaSource = ownMedia.isEmpty && !quotedMedia.isEmpty ? "quoted status \(quotedPost?.id ?? "")" : "status"
         let variant = bestVariant(from: media)
         let galleryImages = galleryImages(from: media)
-        let thumbnailURL = media.compactMap(\.thumbnailURL).first ?? galleryImages.first?.url ?? post.thumbnailURLFromEntities
+        let thumbnailURL = media.compactMap(\.thumbnailURL).first ?? galleryImages.first?.url ?? post.thumbnailURLFromEntities ?? quotedPost?.thumbnailURLFromEntities
 
         logVideoVariants(for: post.id, media: media, selectedVariant: variant, report: &report)
         if let variant {
-            report.add("API media variant for \(post.id): \(variant.debugDescription)")
+            report.add("API media variant for \(post.id) from \(mediaSource): \(variant.debugDescription)")
         } else if let linkedBroadcastURL {
             report.add("Broadcast link for \(post.id): \(linkedBroadcastURL.absoluteString)")
         } else if !galleryImages.isEmpty {
-            report.add("Image gallery for \(post.id): \(galleryImages.count) photos")
+            report.add("Image gallery for \(post.id) from \(mediaSource): \(galleryImages.count) photos")
         } else {
             report.add("No API media variant for \(post.id); will page-probe")
+        }
+        if let quotedTweetID = post.quotedTweetID {
+            report.add("Quoted status for \(post.id): \(quotedTweetID), media objects \(quotedMedia.count)")
         }
         report.add("Thumbnail for \(post.id): \(thumbnailURL == nil ? "missing" : "present"), media objects \(media.count), URL images \(post.urlImageCount)")
 
@@ -209,7 +214,8 @@ struct BroadcastDiscovery {
                 statusURL: statusURL,
                 linkedBroadcastURL: linkedBroadcastURL,
                 variant: variant,
-                galleryImages: galleryImages
+                galleryImages: galleryImages,
+                quotedPostID: quotedPost?.id
             ),
             streamURL: variant?.url,
             title: post.broadcastTitle,
@@ -260,7 +266,8 @@ struct BroadcastDiscovery {
         statusURL: URL,
         linkedBroadcastURL: URL?,
         variant: XAPIMediaVariant?,
-        galleryImages: [GalleryImage]
+        galleryImages: [GalleryImage],
+        quotedPostID: String?
     ) -> String {
         if let linkedBroadcastURL,
            let broadcastID = xBroadcastID(from: linkedBroadcastURL) {
@@ -272,7 +279,7 @@ struct BroadcastDiscovery {
         }
 
         if !galleryImages.isEmpty {
-            return "gallery:\(post.id)"
+            return "gallery:\(quotedPostID ?? post.id)"
         }
 
         if let normalizedText = post.text?
@@ -326,6 +333,12 @@ struct BroadcastDiscovery {
             }
     }
 
+    private func mediaObjects(from post: XAPIPost, mediaByKey: [String: XAPIMedia]) -> [XAPIMedia] {
+        post.attachments?.mediaKeys?
+            .compactMap { mediaByKey[$0] }
+            ?? []
+    }
+
     private func deduplicatedCandidates(_ candidates: [BroadcastCandidate]) -> [BroadcastCandidate] {
         var seen = Set<String>()
         return candidates.filter { seen.insert($0.dedupeKey).inserted }
@@ -361,8 +374,8 @@ struct BroadcastDiscovery {
         var components = URLComponents(string: "https://api.x.com/2/users/\(userID)/tweets")!
         components.queryItems = [
             URLQueryItem(name: "max_results", value: "\(maxResults)"),
-            URLQueryItem(name: "tweet.fields", value: "created_at,entities,attachments"),
-            URLQueryItem(name: "expansions", value: "attachments.media_keys"),
+            URLQueryItem(name: "tweet.fields", value: "created_at,entities,attachments,referenced_tweets"),
+            URLQueryItem(name: "expansions", value: "attachments.media_keys,referenced_tweets.id,referenced_tweets.id.attachments.media_keys"),
             URLQueryItem(name: "media.fields", value: "type,variants,preview_image_url,url,width,height,media_key,alt_text"),
             URLQueryItem(name: "exclude", value: "retweets,replies"),
         ]
@@ -382,16 +395,19 @@ struct BroadcastDiscovery {
         let mediaByKey = Dictionary(
             uniqueKeysWithValues: (response.includes?.media ?? []).map { ($0.mediaKey, $0) }
         )
+        let includedPostsByID = Dictionary(
+            uniqueKeysWithValues: (response.includes?.tweets ?? []).map { ($0.id, $0) }
+        )
 
-        return XAPITimeline(posts: response.data ?? [], mediaByKey: mediaByKey)
+        return XAPITimeline(posts: response.data ?? [], mediaByKey: mediaByKey, includedPostsByID: includedPostsByID)
     }
 
     private func xAPIPosts(ids: [String], bearerToken: String, report: inout DiscoveryReport) async throws -> XAPITimeline {
         var components = URLComponents(string: "https://api.x.com/2/tweets")!
         components.queryItems = [
             URLQueryItem(name: "ids", value: ids.joined(separator: ",")),
-            URLQueryItem(name: "tweet.fields", value: "created_at,entities,attachments"),
-            URLQueryItem(name: "expansions", value: "attachments.media_keys"),
+            URLQueryItem(name: "tweet.fields", value: "created_at,entities,attachments,referenced_tweets"),
+            URLQueryItem(name: "expansions", value: "attachments.media_keys,referenced_tweets.id,referenced_tweets.id.attachments.media_keys"),
             URLQueryItem(name: "media.fields", value: "type,variants,preview_image_url,url,width,height,media_key,alt_text"),
         ]
 
@@ -410,8 +426,11 @@ struct BroadcastDiscovery {
         let mediaByKey = Dictionary(
             uniqueKeysWithValues: (response.includes?.media ?? []).map { ($0.mediaKey, $0) }
         )
+        let includedPostsByID = Dictionary(
+            uniqueKeysWithValues: (response.includes?.tweets ?? []).map { ($0.id, $0) }
+        )
 
-        return XAPITimeline(posts: response.data ?? [], mediaByKey: mediaByKey)
+        return XAPITimeline(posts: response.data ?? [], mediaByKey: mediaByKey, includedPostsByID: includedPostsByID)
     }
 
     private func xAPIData(from url: URL, bearerToken: String, report: inout DiscoveryReport) async throws -> Data {
@@ -578,6 +597,11 @@ private struct XAPIPost: Decodable {
     var createdAt: Date?
     var entities: XAPIPostEntities?
     var attachments: XAPIPostAttachments?
+    var referencedTweets: [XAPIReferencedTweet]?
+
+    var quotedTweetID: String? {
+        referencedTweets?.first { $0.type == "quoted" }?.id
+    }
 
     var broadcastURLFromEntities: URL? {
         entities?.urls?
@@ -622,7 +646,13 @@ private struct XAPIPost: Decodable {
         case createdAt = "created_at"
         case entities
         case attachments
+        case referencedTweets = "referenced_tweets"
     }
+}
+
+private struct XAPIReferencedTweet: Decodable {
+    var type: String
+    var id: String
 }
 
 private struct XAPIPostEntities: Decodable {
@@ -699,6 +729,7 @@ private struct XAPIPostAttachments: Decodable {
 
 private struct XAPIIncludes: Decodable {
     var media: [XAPIMedia]?
+    var tweets: [XAPIPost]?
 }
 
 private struct XAPIMedia: Decodable {
@@ -771,6 +802,9 @@ private struct XAPIMediaVariant: Decodable {
 private struct XAPITimeline {
     var posts: [XAPIPost]
     var mediaByKey: [String: XAPIMedia]
+    var includedPostsByID: [String: XAPIPost]
+
+    static let empty = XAPITimeline(posts: [], mediaByKey: [:], includedPostsByID: [:])
 }
 
 private struct XAPIErrorResponse: Decodable {
