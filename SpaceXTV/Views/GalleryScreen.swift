@@ -74,8 +74,8 @@ struct GalleryScreen: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.white)
                 .accessibilityLabel("Back")
-                .padding(.top, 18)
-                .padding(.leading, 22)
+                .padding(.top, 36)
+                .padding(.leading, 40)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .transition(.opacity)
             }
