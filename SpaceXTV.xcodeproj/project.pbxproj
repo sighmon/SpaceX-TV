@@ -19,6 +19,8 @@
 		0A0000010000000000000009 /* Services/BroadcastDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A0000010000000000000019 /* Services/BroadcastDiscovery.swift */; };
 		0A000001000000000000000A /* Services/KeychainTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A000001000000000000001A /* Services/KeychainTokenStore.swift */; };
 		0A000001000000000000000B /* Views/GalleryScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A000001000000000000001B /* Views/GalleryScreen.swift */; };
+		0A000001000000000000000C /* Models/Launch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A000001000000000000001C /* Models/Launch.swift */; };
+		0A000001000000000000000D /* Services/SpaceXLaunchScheduleService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A000001000000000000001D /* Services/SpaceXLaunchScheduleService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -35,6 +37,8 @@
 		0A0000010000000000000019 /* Services/BroadcastDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/BroadcastDiscovery.swift; sourceTree = "<group>"; };
 		0A000001000000000000001A /* Services/KeychainTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/KeychainTokenStore.swift; sourceTree = "<group>"; };
 		0A000001000000000000001B /* Views/GalleryScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/GalleryScreen.swift; sourceTree = "<group>"; };
+		0A000001000000000000001C /* Models/Launch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Launch.swift; sourceTree = "<group>"; };
+		0A000001000000000000001D /* Services/SpaceXLaunchScheduleService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/SpaceXLaunchScheduleService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -53,10 +57,12 @@
 			children = (
 				0A0000010000000000000011 /* App/SpaceXTVApp.swift */,
 				0A0000010000000000000012 /* Models/Broadcast.swift */,
+				0A000001000000000000001C /* Models/Launch.swift */,
 				0A0000010000000000000013 /* Services/BroadcastLibrary.swift */,
 				0A0000010000000000000014 /* Services/BroadcastResolver.swift */,
 				0A0000010000000000000019 /* Services/BroadcastDiscovery.swift */,
 				0A000001000000000000001A /* Services/KeychainTokenStore.swift */,
+				0A000001000000000000001D /* Services/SpaceXLaunchScheduleService.swift */,
 				0A0000010000000000000015 /* Views/RootView.swift */,
 				0A0000010000000000000016 /* Views/BroadcastBrowserView.swift */,
 				0A0000010000000000000017 /* Views/SettingsPanel.swift */,
@@ -157,10 +163,12 @@
 			files = (
 				0A0000010000000000000001 /* App/SpaceXTVApp.swift in Sources */,
 				0A0000010000000000000002 /* Models/Broadcast.swift in Sources */,
+				0A000001000000000000000C /* Models/Launch.swift in Sources */,
 				0A0000010000000000000003 /* Services/BroadcastLibrary.swift in Sources */,
 				0A0000010000000000000004 /* Services/BroadcastResolver.swift in Sources */,
 				0A0000010000000000000009 /* Services/BroadcastDiscovery.swift in Sources */,
 				0A000001000000000000000A /* Services/KeychainTokenStore.swift in Sources */,
+				0A000001000000000000000D /* Services/SpaceXLaunchScheduleService.swift in Sources */,
 				0A0000010000000000000005 /* Views/RootView.swift in Sources */,
 				0A0000010000000000000006 /* Views/BroadcastBrowserView.swift in Sources */,
 				0A0000010000000000000007 /* Views/SettingsPanel.swift in Sources */,
@@ -181,7 +189,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 11;
+				CURRENT_PROJECT_VERSION = 12;
 				DEVELOPMENT_TEAM = 4P8S9W2NYL;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -216,7 +224,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 11;
+				CURRENT_PROJECT_VERSION = 12;
 				DEVELOPMENT_TEAM = 4P8S9W2NYL;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
