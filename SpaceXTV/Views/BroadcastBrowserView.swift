@@ -31,9 +31,11 @@ struct BroadcastBrowserView: View {
                 let contentWidth = max(0, screenWidth - (horizontalPadding * 2))
 
                 ScrollView {
-                    VStack(alignment: .leading, spacing: verticalSpacing(for: screenWidth)) {
+                    VStack(alignment: .leading, spacing: 0) {
                         header(width: contentWidth)
+                            .padding(.bottom, headerBottomSpacing(for: screenWidth))
                         countdown(width: contentWidth)
+                            .padding(.bottom, verticalSpacing(for: screenWidth))
                         content(width: contentWidth)
                     }
                     .frame(width: contentWidth, alignment: .leading)
@@ -236,6 +238,10 @@ struct BroadcastBrowserView: View {
         width < 900 ? 28 : 42
     }
 
+    private func headerBottomSpacing(for width: CGFloat) -> CGFloat {
+        verticalSpacing(for: width) * 0.5
+    }
+
     private func gridSpacing(for width: CGFloat) -> CGFloat {
         width < 900 ? 32 : 56
     }
@@ -309,7 +315,7 @@ private struct NextLaunchCountdownView: View {
                         countdownUnits(for: remaining)
                     }
                 } else {
-                    HStack(alignment: .center, spacing: 28) {
+                    HStack(alignment: .bottom, spacing: 28) {
                         launchSummary
                         countdownUnits(for: remaining)
                     }
@@ -336,21 +342,31 @@ private struct NextLaunchCountdownView: View {
     }
 
     private func countdownUnits(for remaining: CountdownRemaining) -> some View {
-        HStack(spacing: width < 760 ? 6 : 12) {
-            CountdownUnit(value: remaining.days, label: "DAYS", width: countdownUnitWidth)
-            CountdownSeparator()
-            CountdownUnit(value: remaining.hours, label: "HRS", width: countdownUnitWidth)
-            CountdownSeparator()
-            CountdownUnit(value: remaining.minutes, label: "MIN", width: countdownUnitWidth)
-            CountdownSeparator()
-            CountdownUnit(value: remaining.seconds, label: "SEC", width: countdownUnitWidth)
+        HStack(spacing: 0) {
+            CountdownUnit(value: remaining.days, label: "DAYS", font: countdownFont, width: countdownUnitWidth)
+            CountdownSeparator(font: countdownFont)
+            CountdownUnit(value: remaining.hours, label: "HRS", font: countdownFont, width: countdownUnitWidth)
+            CountdownSeparator(font: countdownFont)
+            CountdownUnit(value: remaining.minutes, label: "MIN", font: countdownFont, width: countdownUnitWidth)
+            CountdownSeparator(font: countdownFont)
+            CountdownUnit(value: remaining.seconds, label: "SEC", font: countdownFont, width: countdownUnitWidth)
         }
+        .fixedSize(horizontal: true, vertical: false)
+        .layoutPriority(1)
         .frame(maxWidth: width < 760 ? .infinity : nil, alignment: width < 760 ? .leading : .center)
         .accessibilityLabel(remaining.accessibilityText)
     }
 
+    private var countdownFont: Font {
+        (width < 760 ? Font.title3 : Font.title2).weight(.semibold).monospacedDigit()
+    }
+
     private var countdownUnitWidth: CGFloat {
-        width < 420 ? 48 : 58
+#if os(tvOS)
+        width < 760 ? 70 : 82
+#else
+        width < 420 ? 44 : 54
+#endif
     }
 
     private var launchMetadata: some View {
@@ -372,14 +388,20 @@ private struct NextLaunchCountdownView: View {
 private struct CountdownUnit: View {
     var value: Int
     var label: String
+    var font: Font
     var width: CGFloat
 
     var body: some View {
         VStack(spacing: 5) {
             Text(String(format: "%02d", value))
-                .font(.system(size: width < 50 ? 26 : 32, weight: .bold, design: .monospaced))
+                .font(font)
                 .foregroundStyle(.white)
-                .frame(minWidth: width - 10)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .fixedSize(horizontal: true, vertical: false)
+                .contentTransition(.numericText())
+                .animation(.easeInOut(duration: 0.24), value: value)
+                .frame(width: width, alignment: .center)
 
             Text(label)
                 .font(.caption2.weight(.bold))
@@ -390,11 +412,21 @@ private struct CountdownUnit: View {
 }
 
 private struct CountdownSeparator: View {
+    var font: Font
+
     var body: some View {
-        Text(":")
-            .font(.system(size: 28, weight: .bold, design: .monospaced))
-            .foregroundStyle(.white.opacity(0.46))
-            .padding(.bottom, 18)
+        VStack(spacing: 5) {
+            Text(":")
+                .font(font)
+                .foregroundStyle(.white.opacity(0.46))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+
+            Text(" ")
+                .font(.caption2.weight(.bold))
+                .hidden()
+        }
+        .accessibilityHidden(true)
     }
 }
 
