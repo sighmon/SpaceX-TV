@@ -315,28 +315,7 @@ private struct NextLaunchCountdownView: View {
                     }
                 }
             }
-            .padding(.horizontal, width < 760 ? 18 : 26)
-            .padding(.vertical, width < 760 ? 18 : 22)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                ZStack {
-                    if let imageURL = launch.imageURL {
-                        RemoteThumbnailImage(url: imageURL, fallback: EmptyView())
-                            .opacity(0.42)
-                    }
-
-                    LinearGradient(
-                        colors: [.black.opacity(0.78), .black.opacity(0.58), .black.opacity(0.84)],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(.white.opacity(0.14), lineWidth: 1)
-            }
         }
     }
 
