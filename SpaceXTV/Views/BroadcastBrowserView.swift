@@ -66,8 +66,11 @@ struct BroadcastBrowserView: View {
             guard case .idle = library.loadingState else { return }
             await library.load()
         }
-        .task {
-            guard loadsNextLaunch else { return }
+        .task(id: library.showsNextLaunchCountdown) {
+            guard loadsNextLaunch, library.showsNextLaunchCountdown else {
+                clearNextLaunch()
+                return
+            }
             await loadNextLaunch()
         }
         .onChange(of: library.xAPIBearerToken) { _, _ in
@@ -123,7 +126,9 @@ struct BroadcastBrowserView: View {
 
     @ViewBuilder
     private func countdown(width: CGFloat) -> some View {
-        if let nextLaunch {
+        if !library.showsNextLaunchCountdown {
+            EmptyView()
+        } else if let nextLaunch {
             NextLaunchCountdownView(launch: nextLaunch, width: width)
         } else if isLoadingNextLaunch {
             HStack(spacing: 12) {
@@ -146,6 +151,10 @@ struct BroadcastBrowserView: View {
     }
 
     private func loadNextLaunch() async {
+        guard library.showsNextLaunchCountdown else {
+            clearNextLaunch()
+            return
+        }
         guard !isLoadingNextLaunch else { return }
         isLoadingNextLaunch = true
         defer { isLoadingNextLaunch = false }
@@ -157,6 +166,12 @@ struct BroadcastBrowserView: View {
             nextLaunch = nil
             nextLaunchError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
+    }
+
+    private func clearNextLaunch() {
+        nextLaunch = nil
+        nextLaunchError = nil
+        isLoadingNextLaunch = false
     }
 
     @ViewBuilder

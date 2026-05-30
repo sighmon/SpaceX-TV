@@ -24,6 +24,11 @@ final class BroadcastLibrary: ObservableObject {
             defaults.set(showsPlayerDebugOverlay, forKey: Keys.showsPlayerDebugOverlay)
         }
     }
+    @Published var showsNextLaunchCountdown: Bool {
+        didSet {
+            defaults.set(showsNextLaunchCountdown, forKey: Keys.showsNextLaunchCountdown)
+        }
+    }
 
     private let discovery: BroadcastDiscovery
     private let defaults: UserDefaults
@@ -62,6 +67,7 @@ final class BroadcastLibrary: ObservableObject {
         }
         defaults.removeObject(forKey: Keys.xAPIBearerToken)
         self.showsPlayerDebugOverlay = defaults.bool(forKey: Keys.showsPlayerDebugOverlay)
+        self.showsNextLaunchCountdown = defaults.object(forKey: Keys.showsNextLaunchCountdown) as? Bool ?? true
     }
 
 #if DEBUG
@@ -78,6 +84,7 @@ final class BroadcastLibrary: ObservableObject {
         self.debugLines = debugLines
         self.xAPIBearerToken = "preview-token"
         self.showsPlayerDebugOverlay = false
+        self.showsNextLaunchCountdown = true
         self.loadingState = .loaded
     }
 #endif
@@ -211,6 +218,7 @@ final class BroadcastLibrary: ObservableObject {
 private enum Keys {
     static let xAPIBearerToken = "xAPIBearerToken"
     static let showsPlayerDebugOverlay = "showsPlayerDebugOverlay"
+    static let showsNextLaunchCountdown = "showsNextLaunchCountdown"
     static let dailyCache = "dailyBroadcastCache"
 }
 
