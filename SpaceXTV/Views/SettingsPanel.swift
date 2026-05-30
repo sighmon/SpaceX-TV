@@ -30,9 +30,6 @@ struct SettingsView: View {
             .ignoresSafeArea()
 
             VStack(alignment: .leading, spacing: 34) {
-                Text("Settings")
-                    .font(.system(size: 56, weight: .semibold))
-
                 VStack(alignment: .leading, spacing: 22) {
                     Text("X API")
                         .font(.title2.weight(.semibold))
