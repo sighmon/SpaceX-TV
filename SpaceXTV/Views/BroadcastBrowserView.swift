@@ -383,7 +383,8 @@ private struct NextLaunchCountdownView: View {
         }
         .fixedSize(horizontal: true, vertical: false)
         .layoutPriority(1)
-        .frame(maxWidth: width < 760 ? .infinity : nil, alignment: width < 760 ? .leading : .center)
+        .padding(.trailing, width < 760 ? 0 : -countdownTrailingCorrection)
+        .frame(maxWidth: width < 760 ? .infinity : nil, alignment: width < 760 ? .leading : .trailing)
         .accessibilityLabel(remaining.accessibilityText)
     }
 
@@ -396,6 +397,14 @@ private struct NextLaunchCountdownView: View {
         width < 760 ? 70 : 82
 #else
         width < 420 ? 44 : 54
+#endif
+    }
+
+    private var countdownTrailingCorrection: CGFloat {
+#if os(tvOS)
+        0
+#else
+        12
 #endif
     }
 
