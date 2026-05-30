@@ -11,6 +11,20 @@ struct BroadcastBrowserView: View {
     @State private var isLoadingNextLaunch = false
     @FocusState private var focusedID: Broadcast.ID?
     private let launchScheduleService = SpaceXLaunchScheduleService()
+    private let loadsNextLaunch: Bool
+
+    init(
+        selectedBroadcast: Binding<Broadcast?>,
+        selectedGallery: Binding<Broadcast?>,
+        showsSettings: Binding<Bool>,
+        previewNextLaunch: NextLaunch? = nil
+    ) {
+        self._selectedBroadcast = selectedBroadcast
+        self._selectedGallery = selectedGallery
+        self._showsSettings = showsSettings
+        self._nextLaunch = State(initialValue: previewNextLaunch)
+        self.loadsNextLaunch = previewNextLaunch == nil
+    }
 
     private var visibleBroadcasts: [Broadcast] {
         library.broadcasts
@@ -53,6 +67,7 @@ struct BroadcastBrowserView: View {
             await library.load()
         }
         .task {
+            guard loadsNextLaunch else { return }
             await loadNextLaunch()
         }
         .onChange(of: library.xAPIBearerToken) { _, _ in
@@ -734,3 +749,83 @@ private final class ThumbnailImageLoader: ObservableObject {
         return nextComponents.url
     }
 }
+
+#if DEBUG
+private extension Broadcast {
+    static let previewBroadcasts: [Broadcast] = [
+        Broadcast(
+            id: UUID(uuidString: "3B246719-1357-4D5E-8E6F-87D652C64F01")!,
+            title: "Starship Flight Test",
+            subtitle: "Live broadcast",
+            sourceURL: URL(string: "https://x.com/SpaceX/status/preview-starship")!,
+            sourceKind: .xBroadcast,
+            tweetText: "Watch Starship's next integrated flight test live from Starbase.",
+            publishedAt: Date(timeIntervalSince1970: 1_780_128_000),
+            artworkName: "SpaceX"
+        ),
+        Broadcast(
+            id: UUID(uuidString: "7A2799E0-B06F-4D9B-A450-B76093C978E0")!,
+            title: "Falcon 9 Mission",
+            subtitle: "Launch webcast",
+            sourceURL: URL(string: "https://x.com/SpaceX/status/preview-falcon-9")!,
+            sourceKind: .xBroadcast,
+            tweetText: "Falcon 9 launches a rideshare mission to orbit from Cape Canaveral.",
+            publishedAt: Date(timeIntervalSince1970: 1_779_264_000),
+            artworkName: "SpaceX"
+        ),
+        Broadcast(
+            id: UUID(uuidString: "18189ACD-8B1F-422D-AE12-9940D5266774")!,
+            title: "Launch Photos",
+            subtitle: "Mission gallery",
+            sourceURL: URL(string: "https://x.com/SpaceX/status/preview-gallery")!,
+            sourceKind: .xBroadcast,
+            contentKind: .gallery,
+            tweetText: "Photos from Falcon 9's liftoff and droneship landing.",
+            publishedAt: Date(timeIntervalSince1970: 1_778_400_000),
+            galleryImages: [
+                GalleryImage(url: URL(string: "https://example.com/spacex-preview-1.jpg")!, width: 1600, height: 900),
+                GalleryImage(url: URL(string: "https://example.com/spacex-preview-2.jpg")!, width: 1600, height: 900),
+                GalleryImage(url: URL(string: "https://example.com/spacex-preview-3.jpg")!, width: 1600, height: 900),
+            ],
+            artworkName: "SpaceX"
+        ),
+        Broadcast(
+            id: UUID(uuidString: "83B1868E-4B52-48BA-B1C7-9102D456A4A0")!,
+            title: "Dragon Departure",
+            subtitle: "Live broadcast",
+            sourceURL: URL(string: "https://x.com/SpaceX/status/preview-dragon")!,
+            sourceKind: .xBroadcast,
+            tweetText: "Dragon autonomously undocks from the space station before returning to Earth.",
+            publishedAt: Date(timeIntervalSince1970: 1_777_536_000),
+            artworkName: "SpaceX"
+        ),
+    ]
+}
+
+private extension NextLaunch {
+    static let preview = NextLaunch(
+        title: "Falcon 9 - Starlink",
+        vehicle: "Falcon 9",
+        launchSite: "SLC-40",
+        launchDate: Date().addingTimeInterval(2 * 86_400 + 4 * 3_600 + 18 * 60),
+        windowCloseDate: nil,
+        isLaunchTimePrecise: true,
+        sourceURL: URL(string: "https://www.spacex.com/launches/preview")!,
+        imageURL: nil
+    )
+}
+
+#Preview("Broadcast Browser") {
+    @Previewable @State var selectedBroadcast: Broadcast?
+    @Previewable @State var selectedGallery: Broadcast?
+    @Previewable @State var showsSettings = false
+
+    BroadcastBrowserView(
+        selectedBroadcast: $selectedBroadcast,
+        selectedGallery: $selectedGallery,
+        showsSettings: $showsSettings,
+        previewNextLaunch: .preview
+    )
+    .environmentObject(BroadcastLibrary(previewBroadcasts: Broadcast.previewBroadcasts))
+}
+#endif

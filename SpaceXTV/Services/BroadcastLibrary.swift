@@ -64,6 +64,24 @@ final class BroadcastLibrary: ObservableObject {
         self.showsPlayerDebugOverlay = defaults.bool(forKey: Keys.showsPlayerDebugOverlay)
     }
 
+#if DEBUG
+    init(
+        previewBroadcasts: [Broadcast],
+        debugLines: [String] = ["Loaded preview broadcasts"]
+    ) {
+        self.discovery = BroadcastDiscovery()
+        self.defaults = .standard
+        self.tokenStore = KeychainTokenStore()
+        self.calendar = .current
+        self.broadcasts = previewBroadcasts
+        self.cachedBroadcasts = previewBroadcasts
+        self.debugLines = debugLines
+        self.xAPIBearerToken = "preview-token"
+        self.showsPlayerDebugOverlay = false
+        self.loadingState = .loaded
+    }
+#endif
+
     func load() async {
         guard hasXAPIBearerToken else {
             showMissingTokenState()
