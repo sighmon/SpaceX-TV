@@ -67,10 +67,11 @@ struct BroadcastBrowserView: View {
             await library.load()
         }
         .task(id: library.showsNextLaunchCountdown) {
-            guard loadsNextLaunch, library.showsNextLaunchCountdown else {
+            guard library.showsNextLaunchCountdown else {
                 clearNextLaunch()
                 return
             }
+            guard loadsNextLaunch else { return }
             await loadNextLaunch()
         }
         .onChange(of: library.xAPIBearerToken) { _, _ in
