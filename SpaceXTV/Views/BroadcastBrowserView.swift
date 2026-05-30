@@ -6,7 +6,25 @@ struct BroadcastBrowserView: View {
     @Binding var selectedBroadcast: Broadcast?
     @Binding var selectedGallery: Broadcast?
     @Binding var showsSettings: Bool
+    @State private var nextLaunch: NextLaunch?
+    @State private var nextLaunchError: String?
+    @State private var isLoadingNextLaunch = false
     @FocusState private var focusedID: Broadcast.ID?
+    private let launchScheduleService = SpaceXLaunchScheduleService()
+    private let loadsNextLaunch: Bool
+
+    init(
+        selectedBroadcast: Binding<Broadcast?>,
+        selectedGallery: Binding<Broadcast?>,
+        showsSettings: Binding<Bool>,
+        previewNextLaunch: NextLaunch? = nil
+    ) {
+        self._selectedBroadcast = selectedBroadcast
+        self._selectedGallery = selectedGallery
+        self._showsSettings = showsSettings
+        self._nextLaunch = State(initialValue: previewNextLaunch)
+        self.loadsNextLaunch = previewNextLaunch == nil
+    }
 
     private var visibleBroadcasts: [Broadcast] {
         library.broadcasts
@@ -27,8 +45,11 @@ struct BroadcastBrowserView: View {
                 let contentWidth = max(0, screenWidth - (horizontalPadding * 2))
 
                 ScrollView {
-                    VStack(alignment: .leading, spacing: verticalSpacing(for: screenWidth)) {
+                    VStack(alignment: .leading, spacing: 0) {
                         header(width: contentWidth)
+                            .padding(.bottom, headerBottomSpacing(for: screenWidth))
+                        countdown(width: contentWidth)
+                            .padding(.bottom, verticalSpacing(for: screenWidth))
                         content(width: contentWidth)
                     }
                     .frame(width: contentWidth, alignment: .leading)
@@ -44,6 +65,14 @@ struct BroadcastBrowserView: View {
         .task {
             guard case .idle = library.loadingState else { return }
             await library.load()
+        }
+        .task(id: library.showsNextLaunchCountdown) {
+            guard library.showsNextLaunchCountdown else {
+                clearNextLaunch()
+                return
+            }
+            guard loadsNextLaunch else { return }
+            await loadNextLaunch()
         }
         .onChange(of: library.xAPIBearerToken) { _, _ in
             Task { await library.load() }
@@ -78,7 +107,10 @@ struct BroadcastBrowserView: View {
                 .buttonStyle(.bordered)
 
                 Button {
-                    Task { await library.refresh() }
+                    Task {
+                        await library.refresh()
+                        await loadNextLaunch()
+                    }
                 } label: {
                     Image(systemName: "arrow.clockwise")
 #if os(tvOS)
@@ -91,6 +123,56 @@ struct BroadcastBrowserView: View {
                 .buttonStyle(.bordered)
             }
         }
+    }
+
+    @ViewBuilder
+    private func countdown(width: CGFloat) -> some View {
+        if !library.showsNextLaunchCountdown {
+            EmptyView()
+        } else if let nextLaunch {
+            NextLaunchCountdownView(launch: nextLaunch, width: width)
+        } else if isLoadingNextLaunch {
+            HStack(spacing: 12) {
+                ProgressView()
+                Text("Loading next launch...")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.74))
+            }
+            .padding(.horizontal, 18)
+            .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+            .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+        } else if let nextLaunchError {
+            Label(nextLaunchError, systemImage: "clock.badge.exclamationmark")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.74))
+                .padding(.horizontal, 18)
+                .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    private func loadNextLaunch() async {
+        guard library.showsNextLaunchCountdown else {
+            clearNextLaunch()
+            return
+        }
+        guard !isLoadingNextLaunch else { return }
+        isLoadingNextLaunch = true
+        defer { isLoadingNextLaunch = false }
+
+        do {
+            nextLaunch = try await launchScheduleService.nextLaunch()
+            nextLaunchError = nil
+        } catch {
+            nextLaunch = nil
+            nextLaunchError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    private func clearNextLaunch() {
+        nextLaunch = nil
+        nextLaunchError = nil
+        isLoadingNextLaunch = false
     }
 
     @ViewBuilder
@@ -187,6 +269,10 @@ struct BroadcastBrowserView: View {
         width < 900 ? 28 : 42
     }
 
+    private func headerBottomSpacing(for width: CGFloat) -> CGFloat {
+        verticalSpacing(for: width) * 0.5
+    }
+
     private func gridSpacing(for width: CGFloat) -> CGFloat {
         width < 900 ? 32 : 56
     }
@@ -235,6 +321,176 @@ private struct MissingTokenView: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(.white.opacity(0.14), lineWidth: 1)
         }
+    }
+}
+
+private struct NextLaunchCountdownView: View {
+    var launch: NextLaunch
+    var width: CGFloat
+
+    private var dateFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let remaining = CountdownRemaining(from: context.date, to: launch.launchDate)
+
+            Group {
+                if width < 760 {
+                    VStack(alignment: .leading, spacing: 18) {
+                        launchSummary
+                        countdownUnits(for: remaining)
+                    }
+                } else {
+                    HStack(alignment: .bottom, spacing: 28) {
+                        launchSummary
+                        countdownUnits(for: remaining)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var launchSummary: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("NEXT LAUNCH")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white.opacity(0.58))
+
+            Text(launch.title)
+                .font((width < 760 ? Font.title3 : Font.title2).weight(.semibold))
+                .foregroundStyle(.white)
+                .lineLimit(2)
+
+            launchMetadata
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func countdownUnits(for remaining: CountdownRemaining) -> some View {
+        HStack(spacing: 0) {
+            CountdownUnit(value: remaining.days, label: "DAYS", font: countdownFont, width: countdownUnitWidth)
+            CountdownSeparator(font: countdownFont)
+            CountdownUnit(value: remaining.hours, label: "HRS", font: countdownFont, width: countdownUnitWidth)
+            CountdownSeparator(font: countdownFont)
+            CountdownUnit(value: remaining.minutes, label: "MIN", font: countdownFont, width: countdownUnitWidth)
+            CountdownSeparator(font: countdownFont)
+            CountdownUnit(value: remaining.seconds, label: "SEC", font: countdownFont, width: countdownUnitWidth)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .layoutPriority(1)
+        .padding(.trailing, width < 760 ? 0 : -countdownTrailingCorrection)
+        .frame(maxWidth: width < 760 ? .infinity : nil, alignment: width < 760 ? .leading : .trailing)
+        .accessibilityLabel(remaining.accessibilityText)
+    }
+
+    private var countdownFont: Font {
+        (width < 760 ? Font.title3 : Font.title2).weight(.semibold).monospacedDigit()
+    }
+
+    private var countdownUnitWidth: CGFloat {
+#if os(tvOS)
+        width < 760 ? 70 : 82
+#else
+        width < 420 ? 44 : 54
+#endif
+    }
+
+    private var countdownTrailingCorrection: CGFloat {
+#if os(tvOS)
+        0
+#else
+        12
+#endif
+    }
+
+    private var launchMetadata: some View {
+        HStack(spacing: 10) {
+            if let vehicle = launch.vehicle, !vehicle.isEmpty {
+                Text(vehicle)
+            }
+            if let launchSite = launch.launchSite, !launchSite.isEmpty {
+                Text(launchSite)
+            }
+            Text(dateFormatter.string(from: launch.launchDate))
+        }
+        .font(.caption.weight(.medium))
+        .foregroundStyle(.white.opacity(0.66))
+        .lineLimit(2)
+    }
+}
+
+private struct CountdownUnit: View {
+    var value: Int
+    var label: String
+    var font: Font
+    var width: CGFloat
+
+    var body: some View {
+        VStack(spacing: 5) {
+            Text(String(format: "%02d", value))
+                .font(font)
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .fixedSize(horizontal: true, vertical: false)
+                .contentTransition(.numericText())
+                .animation(.easeInOut(duration: 0.24), value: value)
+                .frame(width: width, alignment: .center)
+
+            Text(label)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.white.opacity(0.54))
+        }
+        .frame(width: width)
+    }
+}
+
+private struct CountdownSeparator: View {
+    var font: Font
+
+    var body: some View {
+        VStack(spacing: 5) {
+            Text(":")
+                .font(font)
+                .foregroundStyle(.white.opacity(0.46))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+
+            Text(" ")
+                .font(.caption2.weight(.bold))
+                .hidden()
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct CountdownRemaining {
+    var days: Int
+    var hours: Int
+    var minutes: Int
+    var seconds: Int
+    var isElapsed: Bool
+
+    init(from now: Date, to launchDate: Date) {
+        let totalSeconds = max(0, Int(launchDate.timeIntervalSince(now)))
+        days = totalSeconds / 86_400
+        hours = (totalSeconds % 86_400) / 3_600
+        minutes = (totalSeconds % 3_600) / 60
+        seconds = totalSeconds % 60
+        isElapsed = launchDate <= now
+    }
+
+    var accessibilityText: String {
+        if isElapsed {
+            return "Launch time reached"
+        }
+        return "\(days) days, \(hours) hours, \(minutes) minutes, \(seconds) seconds until launch"
     }
 }
 
@@ -518,3 +774,83 @@ private final class ThumbnailImageLoader: ObservableObject {
         return nextComponents.url
     }
 }
+
+#if DEBUG
+private extension Broadcast {
+    static let previewBroadcasts: [Broadcast] = [
+        Broadcast(
+            id: UUID(uuidString: "3B246719-1357-4D5E-8E6F-87D652C64F01")!,
+            title: "Starship Flight Test",
+            subtitle: "Live broadcast",
+            sourceURL: URL(string: "https://x.com/SpaceX/status/preview-starship")!,
+            sourceKind: .xBroadcast,
+            tweetText: "Watch Starship's next integrated flight test live from Starbase.",
+            publishedAt: Date(timeIntervalSince1970: 1_780_128_000),
+            artworkName: "SpaceX"
+        ),
+        Broadcast(
+            id: UUID(uuidString: "7A2799E0-B06F-4D9B-A450-B76093C978E0")!,
+            title: "Falcon 9 Mission",
+            subtitle: "Launch webcast",
+            sourceURL: URL(string: "https://x.com/SpaceX/status/preview-falcon-9")!,
+            sourceKind: .xBroadcast,
+            tweetText: "Falcon 9 launches a rideshare mission to orbit from Cape Canaveral.",
+            publishedAt: Date(timeIntervalSince1970: 1_779_264_000),
+            artworkName: "SpaceX"
+        ),
+        Broadcast(
+            id: UUID(uuidString: "18189ACD-8B1F-422D-AE12-9940D5266774")!,
+            title: "Launch Photos",
+            subtitle: "Mission gallery",
+            sourceURL: URL(string: "https://x.com/SpaceX/status/preview-gallery")!,
+            sourceKind: .xBroadcast,
+            contentKind: .gallery,
+            tweetText: "Photos from Falcon 9's liftoff and droneship landing.",
+            publishedAt: Date(timeIntervalSince1970: 1_778_400_000),
+            galleryImages: [
+                GalleryImage(url: URL(string: "https://example.com/spacex-preview-1.jpg")!, width: 1600, height: 900),
+                GalleryImage(url: URL(string: "https://example.com/spacex-preview-2.jpg")!, width: 1600, height: 900),
+                GalleryImage(url: URL(string: "https://example.com/spacex-preview-3.jpg")!, width: 1600, height: 900),
+            ],
+            artworkName: "SpaceX"
+        ),
+        Broadcast(
+            id: UUID(uuidString: "83B1868E-4B52-48BA-B1C7-9102D456A4A0")!,
+            title: "Dragon Departure",
+            subtitle: "Live broadcast",
+            sourceURL: URL(string: "https://x.com/SpaceX/status/preview-dragon")!,
+            sourceKind: .xBroadcast,
+            tweetText: "Dragon autonomously undocks from the space station before returning to Earth.",
+            publishedAt: Date(timeIntervalSince1970: 1_777_536_000),
+            artworkName: "SpaceX"
+        ),
+    ]
+}
+
+private extension NextLaunch {
+    static let preview = NextLaunch(
+        title: "Falcon 9 - Starlink",
+        vehicle: "Falcon 9",
+        launchSite: "SLC-40",
+        launchDate: Date().addingTimeInterval(2 * 86_400 + 4 * 3_600 + 18 * 60),
+        windowCloseDate: nil,
+        isLaunchTimePrecise: true,
+        sourceURL: URL(string: "https://www.spacex.com/launches/preview")!,
+        imageURL: nil
+    )
+}
+
+#Preview("Broadcast Browser") {
+    @Previewable @State var selectedBroadcast: Broadcast?
+    @Previewable @State var selectedGallery: Broadcast?
+    @Previewable @State var showsSettings = false
+
+    BroadcastBrowserView(
+        selectedBroadcast: $selectedBroadcast,
+        selectedGallery: $selectedGallery,
+        showsSettings: $showsSettings,
+        previewNextLaunch: .preview
+    )
+    .environmentObject(BroadcastLibrary(previewBroadcasts: Broadcast.previewBroadcasts))
+}
+#endif

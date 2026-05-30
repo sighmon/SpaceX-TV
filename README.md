@@ -11,6 +11,7 @@ The app discovers recent SpaceX broadcast posts, shows them as selectable poster
 ## Features
 
 - X API timeline discovery with a user-supplied [Bearer Token](https://docs.x.com/x-api/introduction).
+- Next-launch countdown loaded from the same SpaceX launches feeds used by [spacex.com/launches](https://www.spacex.com/launches).
 - Home-screen prompt when no X API Bearer Token is configured.
 - SpaceX pinned post discovery, including pinned posts that link to `x.com/i/broadcasts/...`.
 - Playback for live and ended broadcasts by resolving X web playback metadata at play time.

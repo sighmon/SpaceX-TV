@@ -30,9 +30,6 @@ struct SettingsView: View {
             .ignoresSafeArea()
 
             VStack(alignment: .leading, spacing: 34) {
-                Text("Settings")
-                    .font(.system(size: 56, weight: .semibold))
-
                 VStack(alignment: .leading, spacing: 22) {
                     Text("X API")
                         .font(.title2.weight(.semibold))
@@ -65,10 +62,20 @@ struct SettingsView: View {
                 .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
 
                 VStack(alignment: .leading, spacing: 18) {
+                    Text("Launches")
+                        .font(.title2.weight(.semibold))
+
+                    Toggle("Show next launch countdown", isOn: $library.showsNextLaunchCountdown)
+                        .font(.body.weight(.medium))
+                }
+                .padding(28)
+                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 18) {
                     Text("Playback")
                         .font(.title2.weight(.semibold))
 
-                    Toggle("Player Debug Overlay", isOn: $library.showsPlayerDebugOverlay)
+                    Toggle("Show player debug overlay", isOn: $library.showsPlayerDebugOverlay)
                         .font(.body.weight(.medium))
                 }
                 .padding(28)
