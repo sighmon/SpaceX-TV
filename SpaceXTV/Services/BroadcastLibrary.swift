@@ -35,16 +35,17 @@ final class BroadcastLibrary: ObservableObject {
     private let tokenStore: KeychainTokenStore
     private let calendar: Calendar
     private let pageSize = 10
-    private let maximumBroadcastLimit = 20
-    private let cacheVersion = 14
+    private let maximumRequestedLimit = 20
+    private let cacheVersion = 15
     private var cachedBroadcasts: [Broadcast] = []
+    private var requestedLimit = 0
 
     var hasXAPIBearerToken: Bool {
         !xAPIBearerToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var canLoadMore: Bool {
-        broadcasts.count < maximumBroadcastLimit
+        requestedLimit < maximumRequestedLimit
     }
 
     init(
@@ -81,6 +82,7 @@ final class BroadcastLibrary: ObservableObject {
         self.calendar = .current
         self.broadcasts = previewBroadcasts
         self.cachedBroadcasts = previewBroadcasts
+        self.requestedLimit = previewBroadcasts.count
         self.debugLines = debugLines
         self.xAPIBearerToken = "preview-token"
         self.showsPlayerDebugOverlay = false
@@ -118,6 +120,7 @@ final class BroadcastLibrary: ObservableObject {
             )
             cachedBroadcasts = result.broadcasts
             broadcasts = result.broadcasts
+            requestedLimit = pageSize
             debugLines = result.report.lines
             saveDailyCache(
                 broadcasts: result.broadcasts,
@@ -128,6 +131,7 @@ final class BroadcastLibrary: ObservableObject {
         } catch {
             cachedBroadcasts = []
             broadcasts = []
+            requestedLimit = 0
             if let failure = error as? BroadcastDiscoveryFailure {
                 debugLines = failure.report.lines
             }
@@ -146,9 +150,9 @@ final class BroadcastLibrary: ObservableObject {
         isLoadingMore = true
         defer { isLoadingMore = false }
 
-        let targetLimit = min(broadcasts.count + pageSize, maximumBroadcastLimit)
-        if cachedBroadcasts.count >= targetLimit {
-            broadcasts = Array(cachedBroadcasts.prefix(targetLimit))
+        let targetLimit = min(requestedLimit + pageSize, maximumRequestedLimit)
+        if requestedLimit >= targetLimit {
+            broadcasts = cachedBroadcasts
             return
         }
 
@@ -160,6 +164,7 @@ final class BroadcastLibrary: ObservableObject {
             )
             cachedBroadcasts = result.broadcasts
             broadcasts = result.broadcasts
+            requestedLimit = targetLimit
             debugLines = result.report.lines
             saveDailyCache(
                 broadcasts: result.broadcasts,
@@ -186,6 +191,7 @@ final class BroadcastLibrary: ObservableObject {
 
         cachedBroadcasts = cache.broadcasts
         broadcasts = cache.broadcasts
+        requestedLimit = cache.requestedLimit ?? minimumLimit
         debugLines = ["Loaded \(broadcasts.count) broadcasts from today's cache"] + cache.debugLines
         loadingState = .loaded
         return true
@@ -208,6 +214,7 @@ final class BroadcastLibrary: ObservableObject {
     private func showMissingTokenState() {
         cachedBroadcasts = []
         broadcasts = []
+        requestedLimit = 0
         isLoadingMore = false
         debugLines = ["No X API Bearer Token configured"]
         loadingState = .failed(BroadcastDiscoveryError.missingBearerToken.errorDescription ?? "Add an X API Bearer Token in Settings.")

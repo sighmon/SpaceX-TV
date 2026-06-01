@@ -58,27 +58,14 @@ struct BroadcastDiscovery {
             throw BroadcastDiscoveryFailure(error: BroadcastDiscoveryError.noStatusesFound, report: report)
         }
 
-        let feedCandidates = candidates.selectedForFeed(limit: limit)
-        let supplementalCount = max(0, feedCandidates.count - limit)
-        if supplementalCount > 0 {
-            report.add("Selected \(feedCandidates.count) candidates including \(supplementalCount) supplemental Starship films")
-        } else {
-            report.add("Selected \(feedCandidates.count) candidates")
-        }
-
-        var broadcasts: [Broadcast] = []
-        for (index, candidate) in feedCandidates.prefix(80).enumerated() {
+        var selectedXItems: [DiscoveredBroadcastItem] = []
+        let xCandidates = candidates.filter { !$0.isStarshipFilm }
+        for (index, candidate) in xCandidates.prefix(80).enumerated() {
             let statusURL = candidate.statusURL
-
-            if candidate.sourceKind == .hls {
-                report.add("Adding Starship film \(index + 1): \(candidate.title)")
-                broadcasts.append(broadcast(from: candidate, streamURL: nil))
-                continue
-            }
 
             if !candidate.galleryImages.isEmpty, candidate.streamURL == nil, !candidate.allowsDeferredStreamResolution {
                 report.add("Adding gallery \(index + 1): \(statusURL.lastPathComponent), images \(candidate.galleryImages.count)")
-                broadcasts.append(gallery(from: candidate))
+                selectedXItems.append(DiscoveredBroadcastItem(candidate: candidate, broadcast: gallery(from: candidate)))
                 continue
             }
 
@@ -100,20 +87,39 @@ struct BroadcastDiscovery {
                 }
 
                 report.add("Found stream for \(statusURL.lastPathComponent)")
-                broadcasts.append(broadcast(
-                    from: candidate,
-                    streamURL: streamURL,
-                    thumbnailURL: candidate.thumbnailURL ?? resolvedThumbnailURL
+                selectedXItems.append(DiscoveredBroadcastItem(
+                    candidate: candidate,
+                    broadcast: broadcast(
+                        from: candidate,
+                        streamURL: streamURL,
+                        thumbnailURL: candidate.thumbnailURL ?? resolvedThumbnailURL
+                    )
                 ))
             } catch {
                 if candidate.allowsDeferredStreamResolution {
                     report.add("Deferring stream resolution for linked broadcast \(statusURL.lastPathComponent): \(debugMessage(for: error))")
-                    broadcasts.append(broadcast(from: candidate, streamURL: nil))
+                    selectedXItems.append(DiscoveredBroadcastItem(candidate: candidate, broadcast: broadcast(from: candidate, streamURL: nil)))
                 } else {
                     report.add("No stream for \(statusURL.lastPathComponent): \(debugMessage(for: error))")
                 }
             }
         }
+
+        let selectedStarshipItems = candidates
+            .filter(\.isStarshipFilm)
+            .sortedByPublishedDateDescending()
+            .map { candidate in
+                DiscoveredBroadcastItem(candidate: candidate, broadcast: broadcast(from: candidate, streamURL: nil))
+            }
+        report.add("Adding \(selectedStarshipItems.count) Starship films after X posts")
+
+        let broadcasts = (
+            selectedXItems
+        )
+        .sorted { $0.candidate.isSortedBefore($1.candidate) }
+        .map(\.broadcast)
+        + selectedStarshipItems
+            .map(\.broadcast)
 
         guard !broadcasts.isEmpty else {
             throw BroadcastDiscoveryFailure(error: BroadcastDiscoveryError.noBroadcastsFound, report: report)
@@ -634,58 +640,36 @@ private struct BroadcastCandidate {
     }
 }
 
-private extension Array where Element == BroadcastCandidate {
-    func sortedByPublishedDateDescending() -> [BroadcastCandidate] {
-        sorted { lhs, rhs in
-            if lhs.isPinned != rhs.isPinned {
-                return lhs.isPinned
-            }
+private struct DiscoveredBroadcastItem {
+    var candidate: BroadcastCandidate
+    var broadcast: Broadcast
+}
 
-            switch (lhs.publishedAt, rhs.publishedAt) {
-            case let (lhsDate?, rhsDate?):
-                if lhsDate != rhsDate {
-                    return lhsDate > rhsDate
-                }
-                return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
-            case (_?, nil):
-                return true
-            case (nil, _?):
-                return false
-            case (nil, nil):
-                return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+private extension BroadcastCandidate {
+    func isSortedBefore(_ rhs: BroadcastCandidate) -> Bool {
+        if isPinned != rhs.isPinned {
+            return isPinned
+        }
+
+        switch (publishedAt, rhs.publishedAt) {
+        case let (lhsDate?, rhsDate?):
+            if lhsDate != rhsDate {
+                return lhsDate > rhsDate
             }
+            return title.localizedStandardCompare(rhs.title) == .orderedAscending
+        case (_?, nil):
+            return true
+        case (nil, _?):
+            return false
+        case (nil, nil):
+            return title.localizedStandardCompare(rhs.title) == .orderedAscending
         }
     }
+}
 
-    func selectedForFeed(limit: Int) -> [BroadcastCandidate] {
-        let sortedCandidates = sortedByPublishedDateDescending()
-        let starshipFilms = sortedCandidates.filter(\.isStarshipFilm)
-        let xCandidates = sortedCandidates.filter { !$0.isStarshipFilm }
-        let selectedX = Array(xCandidates.prefix(limit))
-        let inlineCutoff = selectedX
-            .filter { !$0.isPinned }
-            .compactMap(\.publishedAt)
-            .min()
-            ?? selectedX.compactMap(\.publishedAt).min()
-
-        let inlineStarshipFilms: [BroadcastCandidate]
-        let supplementalStarshipFilms: [BroadcastCandidate]
-        if let inlineCutoff {
-            inlineStarshipFilms = starshipFilms.filter { film in
-                guard let publishedAt = film.publishedAt else { return false }
-                return publishedAt >= inlineCutoff
-            }
-            supplementalStarshipFilms = starshipFilms.filter { film in
-                guard let publishedAt = film.publishedAt else { return true }
-                return publishedAt < inlineCutoff
-            }
-        } else {
-            inlineStarshipFilms = []
-            supplementalStarshipFilms = starshipFilms
-        }
-
-        return (selectedX + inlineStarshipFilms).sortedByPublishedDateDescending()
-            + supplementalStarshipFilms.sortedByPublishedDateDescending()
+private extension Array where Element == BroadcastCandidate {
+    func sortedByPublishedDateDescending() -> [BroadcastCandidate] {
+        sorted { $0.isSortedBefore($1) }
     }
 }
 

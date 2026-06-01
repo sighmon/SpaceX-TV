@@ -17,7 +17,7 @@ The app discovers recent SpaceX broadcast posts, shows them as selectable poster
 - SpaceX pinned post discovery, including pinned posts that link to `x.com/i/broadcasts/...`.
 - Playback for live and ended broadcasts by resolving X web playback metadata at play time.
 - Highest-quality stream selection from available HLS or MP4 variants.
-- First page of 10 broadcasts on launch, then another 10 when scrolling to the end.
+- First load uses 25 recent SpaceX posts, showing every playable result, with deeper post fetches when scrolling to the end.
 - Daily cache for API discovery responses so app relaunches do not always hit X again.
 - Full-width tvOS player with end-of-video actions for Back and Replay.
 - Settings view opened from the gear button.
@@ -35,7 +35,7 @@ Discovery prefers X API v2:
 
 The app requires a user-supplied X API Bearer Token. Without one, the home screen shows a prompt to add the token in Settings.
 
-The app reads attached media variants and linked broadcast URLs from the returned posts. It also reads SpaceX's `STARSHIP` media playlist so new Starship films appear in the feed automatically. Pinned, timeline, and Starship media results are de-duplicated by broadcast ID where possible, then by stream URL, normalized post text, status URL, or SpaceX media ID. Starship films sort inline when they fall within the current X post page and are appended as supplemental items when older, so they remain visible without displacing the requested number of X posts. No profile-scraping or static HLS fallback URLs are bundled.
+The app reads attached media variants and linked broadcast URLs from every post returned by the current X API timeline request, then shows every playable result. It also reads SpaceX's `STARSHIP` media playlist so new Starship films appear automatically. Pinned, timeline, and Starship media results are de-duplicated by broadcast ID where possible, then by stream URL, normalized post text, status URL, or SpaceX media ID. Pinned posts stay at the top, timeline results follow by date, and Starship films are appended after the X posts. No profile-scraping or static HLS fallback URLs are bundled.
 
 ## Settings
 
