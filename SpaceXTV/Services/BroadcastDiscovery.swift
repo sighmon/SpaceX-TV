@@ -25,6 +25,7 @@ struct BroadcastDiscovery {
     private let timelineFetchMultiplier = 2
     private let minimumTimelineFetchLimit = 25
     private let maximumTimelineFetchLimit = 100
+    private let starshipPlaylistURL = URL(string: "https://content.spacex.com/api/spacex-website/media-playlist")!
 
     var resolver: BroadcastResolver {
         BroadcastResolver(session: session)
@@ -36,21 +37,44 @@ struct BroadcastDiscovery {
         let timelineLimit = timelineFetchLimit(for: limit)
         report.add("X API timeline fetch limit: \(timelineLimit)")
 
-        let candidates = try await recentSpaceXBroadcastCandidates(
+        var candidates = try await recentSpaceXBroadcastCandidates(
             timelineLimit: timelineLimit,
             xAPIBearerToken: xAPIBearerToken,
             report: &report
         )
         report.add("Candidate statuses: \(candidates.count)")
 
+        do {
+            let starshipFilmCandidates = try await recentStarshipFilmCandidates(report: &report)
+            candidates = deduplicatedCandidates(candidates + starshipFilmCandidates)
+            report.add("Starship film candidates: \(starshipFilmCandidates.count)")
+        } catch {
+            report.add("Starship film discovery failed: \(debugMessage(for: error))")
+        }
+        candidates = candidates.sortedByPublishedDateDescending()
+        report.add("Merged candidates: \(candidates.count)")
+
         guard !candidates.isEmpty else {
             throw BroadcastDiscoveryFailure(error: BroadcastDiscoveryError.noStatusesFound, report: report)
         }
 
+        let feedCandidates = candidates.selectedForFeed(limit: limit)
+        let supplementalCount = max(0, feedCandidates.count - limit)
+        if supplementalCount > 0 {
+            report.add("Selected \(feedCandidates.count) candidates including \(supplementalCount) supplemental Starship films")
+        } else {
+            report.add("Selected \(feedCandidates.count) candidates")
+        }
+
         var broadcasts: [Broadcast] = []
-        for (index, candidate) in candidates.prefix(80).enumerated() {
-            guard broadcasts.count < limit else { break }
+        for (index, candidate) in feedCandidates.prefix(80).enumerated() {
             let statusURL = candidate.statusURL
+
+            if candidate.sourceKind == .hls {
+                report.add("Adding Starship film \(index + 1): \(candidate.title)")
+                broadcasts.append(broadcast(from: candidate, streamURL: nil))
+                continue
+            }
 
             if !candidate.galleryImages.isEmpty, candidate.streamURL == nil, !candidate.allowsDeferredStreamResolution {
                 report.add("Adding gallery \(index + 1): \(statusURL.lastPathComponent), images \(candidate.galleryImages.count)")
@@ -104,12 +128,12 @@ struct BroadcastDiscovery {
             title: candidate.title,
             subtitle: candidate.subtitle,
             sourceURL: candidate.statusURL,
-            sourceKind: .xBroadcast,
+            sourceKind: candidate.sourceKind,
             streamURL: streamURL,
             tweetText: candidate.tweetText,
             publishedAt: candidate.publishedAt,
             thumbnailURL: thumbnailURL ?? candidate.thumbnailURL,
-            artworkName: "antenna.radiowaves.left.and.right"
+            artworkName: candidate.artworkName
         )
     }
 
@@ -230,7 +254,8 @@ struct BroadcastDiscovery {
             publishedAt: post.createdAt,
             thumbnailURL: thumbnailURL,
             galleryImages: galleryImages,
-            allowsDeferredStreamResolution: linkedBroadcastURL != nil
+            allowsDeferredStreamResolution: linkedBroadcastURL != nil,
+            isPinned: isPinned
         )
     }
 
@@ -342,6 +367,58 @@ struct BroadcastDiscovery {
     private func deduplicatedCandidates(_ candidates: [BroadcastCandidate]) -> [BroadcastCandidate] {
         var seen = Set<String>()
         return candidates.filter { seen.insert($0.dedupeKey).inserted }
+    }
+
+    private func recentStarshipFilmCandidates(report: inout DiscoveryReport) async throws -> [BroadcastCandidate] {
+        report.add("SpaceX CMS GET: \(starshipPlaylistURL.path)")
+        var request = URLRequest(url: starshipPlaylistURL)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await session.data(for: request)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        report.add("SpaceX CMS HTTP \(statusCode), \(data.count) bytes")
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200 ..< 300).contains(httpResponse.statusCode) else {
+            throw BroadcastDiscoveryError.invalidResponse
+        }
+
+        let playlists = try spaceXCMSDecoder().decode([SpaceXMediaPlaylist].self, from: data)
+        let starshipMedia = playlists
+            .first { $0.link == "starship" }?
+            .media ?? []
+
+        return starshipMedia.compactMap { media in
+            guard let streamURL = media.bestStreamURL else { return nil }
+            return BroadcastCandidate(
+                statusURL: streamURL,
+                dedupeKey: "spacex-media:\(media.documentID ?? media.link ?? streamURL.absoluteString)",
+                streamURL: nil,
+                title: media.title,
+                subtitle: media.bestSubtitle,
+                tweetText: media.bestDescription,
+                publishedAt: media.date,
+                thumbnailURL: media.poster?.bestURL,
+                sourceKind: .hls,
+                artworkName: media.uhdStreamingLink == nil && media.uhdLink == nil ? "film" : "play.tv"
+            )
+        }
+    }
+
+    private func spaceXCMSDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let value = try container.decode(String.self)
+            if let date = SpaceXCMSDateParser.date(from: value) {
+                return date
+            }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Invalid SpaceX CMS date: \(value)"
+            )
+        }
+        return decoder
     }
 
     private func timelineFetchLimit(for broadcastLimit: Int) -> Int {
@@ -515,6 +592,12 @@ private struct BroadcastCandidate {
     var thumbnailURL: URL? = nil
     var galleryImages: [GalleryImage] = []
     var allowsDeferredStreamResolution: Bool = false
+    var isPinned: Bool = false
+    var sourceKind: Broadcast.SourceKind = .xBroadcast
+    var artworkName: String = "antenna.radiowaves.left.and.right"
+    var isStarshipFilm: Bool {
+        sourceKind == .hls
+    }
 
     init(
         statusURL: URL,
@@ -526,7 +609,10 @@ private struct BroadcastCandidate {
         publishedAt: Date? = nil,
         thumbnailURL: URL? = nil,
         galleryImages: [GalleryImage] = [],
-        allowsDeferredStreamResolution: Bool = false
+        allowsDeferredStreamResolution: Bool = false,
+        isPinned: Bool = false,
+        sourceKind: Broadcast.SourceKind = .xBroadcast,
+        artworkName: String = "antenna.radiowaves.left.and.right"
     ) {
         self.statusURL = statusURL
         if let dedupeKey, !dedupeKey.isEmpty {
@@ -542,6 +628,64 @@ private struct BroadcastCandidate {
         self.thumbnailURL = thumbnailURL
         self.galleryImages = galleryImages
         self.allowsDeferredStreamResolution = allowsDeferredStreamResolution
+        self.isPinned = isPinned
+        self.sourceKind = sourceKind
+        self.artworkName = artworkName
+    }
+}
+
+private extension Array where Element == BroadcastCandidate {
+    func sortedByPublishedDateDescending() -> [BroadcastCandidate] {
+        sorted { lhs, rhs in
+            if lhs.isPinned != rhs.isPinned {
+                return lhs.isPinned
+            }
+
+            switch (lhs.publishedAt, rhs.publishedAt) {
+            case let (lhsDate?, rhsDate?):
+                if lhsDate != rhsDate {
+                    return lhsDate > rhsDate
+                }
+                return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            case (nil, nil):
+                return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+            }
+        }
+    }
+
+    func selectedForFeed(limit: Int) -> [BroadcastCandidate] {
+        let sortedCandidates = sortedByPublishedDateDescending()
+        let starshipFilms = sortedCandidates.filter(\.isStarshipFilm)
+        let xCandidates = sortedCandidates.filter { !$0.isStarshipFilm }
+        let selectedX = Array(xCandidates.prefix(limit))
+        let inlineCutoff = selectedX
+            .filter { !$0.isPinned }
+            .compactMap(\.publishedAt)
+            .min()
+            ?? selectedX.compactMap(\.publishedAt).min()
+
+        let inlineStarshipFilms: [BroadcastCandidate]
+        let supplementalStarshipFilms: [BroadcastCandidate]
+        if let inlineCutoff {
+            inlineStarshipFilms = starshipFilms.filter { film in
+                guard let publishedAt = film.publishedAt else { return false }
+                return publishedAt >= inlineCutoff
+            }
+            supplementalStarshipFilms = starshipFilms.filter { film in
+                guard let publishedAt = film.publishedAt else { return true }
+                return publishedAt < inlineCutoff
+            }
+        } else {
+            inlineStarshipFilms = []
+            supplementalStarshipFilms = starshipFilms
+        }
+
+        return (selectedX + inlineStarshipFilms).sortedByPublishedDateDescending()
+            + supplementalStarshipFilms.sortedByPublishedDateDescending()
     }
 }
 
@@ -826,6 +970,97 @@ private struct XAPIRequestError: LocalizedError {
     }
 }
 
+private struct SpaceXMediaPlaylist: Decodable {
+    var title: String
+    var link: String
+    var media: [SpaceXMediaItem]
+}
+
+private struct SpaceXMediaItem: Decodable {
+    var documentID: String?
+    var title: String
+    var link: String?
+    var shortDescription: String?
+    var description: String?
+    var date: Date?
+    var hdLink: URL?
+    var fhdLink: URL?
+    var uhdLink: URL?
+    var hdStreamingLink: URL?
+    var fhdStreamingLink: URL?
+    var uhdStreamingLink: URL?
+    var autoStreamingLink: URL?
+    var poster: SpaceXMediaPoster?
+
+    var bestStreamURL: URL? {
+        uhdStreamingLink ?? autoStreamingLink ?? fhdStreamingLink ?? hdStreamingLink ?? uhdLink ?? fhdLink ?? hdLink
+    }
+
+    var bestSubtitle: String {
+        if uhdStreamingLink != nil || uhdLink != nil {
+            return "Starship film · 4K"
+        }
+        return "Starship film"
+    }
+
+    var bestDescription: String? {
+        [shortDescription, description?.strippingHTMLTags()]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case documentID = "documentId"
+        case title
+        case link
+        case shortDescription
+        case description
+        case date
+        case hdLink
+        case fhdLink
+        case uhdLink
+        case hdStreamingLink
+        case fhdStreamingLink
+        case uhdStreamingLink
+        case autoStreamingLink
+        case poster
+    }
+}
+
+private struct SpaceXMediaPoster: Decodable {
+    var url: URL?
+    var formats: Formats?
+
+    var bestURL: URL? {
+        formats?.large?.url ?? formats?.medium?.url ?? url
+    }
+
+    struct Formats: Decodable {
+        var large: Format?
+        var medium: Format?
+        var small: Format?
+    }
+
+    struct Format: Decodable {
+        var url: URL?
+    }
+}
+
+private enum SpaceXCMSDateParser {
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    static func date(from value: String) -> Date? {
+        dayFormatter.date(from: value) ?? XAPIDateParser.date(from: value)
+    }
+}
+
 private enum XAPIDateParser {
     private static let fractionalSecondsFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -841,6 +1076,15 @@ private enum XAPIDateParser {
 
     static func date(from value: String) -> Date? {
         fractionalSecondsFormatter.date(from: value) ?? internetDateTimeFormatter.date(from: value)
+    }
+}
+
+private extension String {
+    func strippingHTMLTags() -> String {
+        replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&quot;", with: "\"")
     }
 }
 

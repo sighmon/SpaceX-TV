@@ -36,7 +36,7 @@ final class BroadcastLibrary: ObservableObject {
     private let calendar: Calendar
     private let pageSize = 10
     private let maximumBroadcastLimit = 20
-    private let cacheVersion = 12
+    private let cacheVersion = 14
     private var cachedBroadcasts: [Broadcast] = []
 
     var hasXAPIBearerToken: Bool {
@@ -117,7 +117,7 @@ final class BroadcastLibrary: ObservableObject {
                 xAPIBearerToken: token.isEmpty ? nil : token
             )
             cachedBroadcasts = result.broadcasts
-            broadcasts = Array(result.broadcasts.prefix(pageSize))
+            broadcasts = result.broadcasts
             debugLines = result.report.lines
             saveDailyCache(
                 broadcasts: result.broadcasts,
@@ -159,7 +159,7 @@ final class BroadcastLibrary: ObservableObject {
                 xAPIBearerToken: token.isEmpty ? nil : token
             )
             cachedBroadcasts = result.broadcasts
-            broadcasts = Array(result.broadcasts.prefix(targetLimit))
+            broadcasts = result.broadcasts
             debugLines = result.report.lines
             saveDailyCache(
                 broadcasts: result.broadcasts,
@@ -185,8 +185,7 @@ final class BroadcastLibrary: ObservableObject {
         }
 
         cachedBroadcasts = cache.broadcasts
-        let restoredLimit = min(cache.requestedLimit ?? pageSize, maximumBroadcastLimit)
-        broadcasts = Array(cache.broadcasts.prefix(restoredLimit))
+        broadcasts = cache.broadcasts
         debugLines = ["Loaded \(broadcasts.count) broadcasts from today's cache"] + cache.debugLines
         loadingState = .loaded
         return true

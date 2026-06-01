@@ -11,6 +11,7 @@ The app discovers recent SpaceX broadcast posts, shows them as selectable poster
 ## Features
 
 - X API timeline discovery with a user-supplied [Bearer Token](https://docs.x.com/x-api/introduction).
+- SpaceX Starship film discovery from the public `STARSHIP` media playlist on spacex.com.
 - Next-launch countdown loaded from the same SpaceX launches feeds used by [spacex.com/launches](https://www.spacex.com/launches).
 - Home-screen prompt when no X API Bearer Token is configured.
 - SpaceX pinned post discovery, including pinned posts that link to `x.com/i/broadcasts/...`.
@@ -34,7 +35,7 @@ Discovery prefers X API v2:
 
 The app requires a user-supplied X API Bearer Token. Without one, the home screen shows a prompt to add the token in Settings.
 
-The app reads attached media variants and linked broadcast URLs from the returned posts. Pinned and timeline results are de-duplicated by broadcast ID where possible, then by stream URL, normalized post text, or status URL. No profile-scraping or static HLS fallback URLs are bundled.
+The app reads attached media variants and linked broadcast URLs from the returned posts. It also reads SpaceX's `STARSHIP` media playlist so new Starship films appear in the feed automatically. Pinned, timeline, and Starship media results are de-duplicated by broadcast ID where possible, then by stream URL, normalized post text, status URL, or SpaceX media ID. Starship films sort inline when they fall within the current X post page and are appended as supplemental items when older, so they remain visible without displacing the requested number of X posts. No profile-scraping or static HLS fallback URLs are bundled.
 
 ## Settings
 
