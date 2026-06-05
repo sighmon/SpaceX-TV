@@ -20,6 +20,12 @@ final class BroadcastLibrary: ObservableObject {
             defaults.removeObject(forKey: Keys.dailyCache)
         }
     }
+    @Published var usesXAPIBearerToken: Bool {
+        didSet {
+            defaults.set(usesXAPIBearerToken, forKey: Keys.usesXAPIBearerToken)
+            defaults.removeObject(forKey: Keys.dailyCache)
+        }
+    }
     @Published var showsPlayerDebugOverlay: Bool {
         didSet {
             defaults.set(showsPlayerDebugOverlay, forKey: Keys.showsPlayerDebugOverlay)
@@ -69,6 +75,7 @@ final class BroadcastLibrary: ObservableObject {
             self.xAPIBearerToken = keychainToken
         }
         defaults.removeObject(forKey: Keys.xAPIBearerToken)
+        self.usesXAPIBearerToken = defaults.bool(forKey: Keys.usesXAPIBearerToken)
         self.showsPlayerDebugOverlay = defaults.bool(forKey: Keys.showsPlayerDebugOverlay)
         self.showsNextLaunchCountdown = defaults.object(forKey: Keys.showsNextLaunchCountdown) as? Bool ?? true
     }
@@ -87,6 +94,7 @@ final class BroadcastLibrary: ObservableObject {
         self.requestedLimit = previewBroadcasts.count
         self.debugLines = debugLines
         self.xAPIBearerToken = "preview-token"
+        self.usesXAPIBearerToken = false
         self.showsPlayerDebugOverlay = false
         self.showsNextLaunchCountdown = true
         self.loadingState = .loaded
@@ -162,7 +170,7 @@ final class BroadcastLibrary: ObservableObject {
 
     private func discoverRecentSpaceXBroadcasts(limit: Int) async throws -> BroadcastDiscoveryResult {
         let token = xAPIBearerToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !token.isEmpty {
+        if usesXAPIBearerToken, !token.isEmpty {
             return try await discovery.discoverRecentSpaceXBroadcasts(
                 limit: limit,
                 xAPIBearerToken: token
@@ -218,6 +226,7 @@ final class BroadcastLibrary: ObservableObject {
 
 private enum Keys {
     static let xAPIBearerToken = "xAPIBearerToken"
+    static let usesXAPIBearerToken = "usesXAPIBearerToken"
     static let showsPlayerDebugOverlay = "showsPlayerDebugOverlay"
     static let showsNextLaunchCountdown = "showsNextLaunchCountdown"
     static let dailyCache = "dailyBroadcastCache"

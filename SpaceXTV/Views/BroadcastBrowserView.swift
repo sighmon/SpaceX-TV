@@ -77,6 +77,9 @@ struct BroadcastBrowserView: View {
         .onChange(of: library.xAPIBearerToken) { _, _ in
             Task { await library.load() }
         }
+        .onChange(of: library.usesXAPIBearerToken) { _, _ in
+            Task { await library.load() }
+        }
     }
 
     private func header(width: CGFloat) -> some View {
