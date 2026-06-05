@@ -47,14 +47,17 @@ struct SettingsView: View {
                         }
                         .focused($tokenFocused)
 
-                    Button {
-                        Task { await library.refresh() }
-                    } label: {
-                        Label("Refresh Broadcasts", systemImage: "arrow.clockwise")
-                            .font(.title3.weight(.semibold))
-                    }
+                    Toggle("Use your Bearer Token", isOn: $library.usesXAPIBearerToken)
+                        .font(.body.weight(.medium))
 
-                    Text("The token is saved to Keychain and used for X API timeline discovery.")
+//                    Button {
+//                        Task { await library.refresh() }
+//                    } label: {
+//                        Label("Refresh Broadcasts", systemImage: "arrow.clockwise")
+//                            .font(.title3.weight(.semibold))
+//                    }
+
+                    Text(library.usesXAPIBearerToken ? "Using your token for X API timeline discovery." : "Using X API cache for timeline discovery.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -62,18 +65,11 @@ struct SettingsView: View {
                 .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
 
                 VStack(alignment: .leading, spacing: 18) {
-                    Text("Launches")
+                    Text("Settings")
                         .font(.title2.weight(.semibold))
 
                     Toggle("Show next launch countdown", isOn: $library.showsNextLaunchCountdown)
                         .font(.body.weight(.medium))
-                }
-                .padding(28)
-                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
-
-                VStack(alignment: .leading, spacing: 18) {
-                    Text("Playback")
-                        .font(.title2.weight(.semibold))
 
                     Toggle("Show player debug overlay", isOn: $library.showsPlayerDebugOverlay)
                         .font(.body.weight(.medium))

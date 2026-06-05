@@ -77,6 +77,9 @@ struct BroadcastBrowserView: View {
         .onChange(of: library.xAPIBearerToken) { _, _ in
             Task { await library.load() }
         }
+        .onChange(of: library.usesXAPIBearerToken) { _, _ in
+            Task { await library.load() }
+        }
     }
 
     private func header(width: CGFloat) -> some View {
@@ -177,36 +180,40 @@ struct BroadcastBrowserView: View {
 
     @ViewBuilder
     private func content(width: CGFloat) -> some View {
-        if !library.hasXAPIBearerToken {
-            MissingTokenView {
-                showsSettings = true
-            }
-        } else {
-            switch library.loadingState {
-            case .idle, .loading:
-                ProgressView("Finding recent broadcasts...")
-                    .font(.title2)
-                    .frame(maxWidth: .infinity, minHeight: 260, alignment: .center)
-            case .loaded:
-                broadcastGrid(width: width)
-            case .failed(let message):
-                VStack(alignment: .leading, spacing: 20) {
-                    Label("Broadcasts unavailable", systemImage: "exclamationmark.triangle")
-                        .font(.title2.weight(.semibold))
-                    Text(message)
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                    DebugLogView(lines: library.debugLines)
+        switch library.loadingState {
+        case .idle, .loading:
+            ProgressView("Finding recent broadcasts...")
+                .font(.title2)
+                .frame(maxWidth: .infinity, minHeight: 260, alignment: .center)
+        case .loaded:
+            broadcastGrid(width: width)
+        case .failed(let message):
+            VStack(alignment: .leading, spacing: 20) {
+                Label("Broadcasts unavailable", systemImage: "exclamationmark.triangle")
+                    .font(.title2.weight(.semibold))
+                Text(message)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                DebugLogView(lines: library.debugLines)
+                HStack(spacing: 16) {
                     Button {
                         Task { await library.refresh() }
                     } label: {
                         Label("Refresh", systemImage: "arrow.clockwise")
                             .font(.title3.weight(.semibold))
                     }
+                    if !library.hasXAPIBearerToken {
+                        Button {
+                            showsSettings = true
+                        } label: {
+                            Label("Add Token", systemImage: "key.fill")
+                                .font(.title3.weight(.semibold))
+                        }
+                    }
                 }
-                .padding(28)
-                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
             }
+            .padding(28)
+            .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
         }
     }
 
@@ -288,39 +295,6 @@ struct BroadcastBrowserView: View {
 
     private func logoWidth(for width: CGFloat) -> CGFloat {
         width < 700 ? 112 : 140
-    }
-}
-
-private struct MissingTokenView: View {
-    var openSettings: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Label("Add your X API token", systemImage: "key.fill")
-                .font(.title2.weight(.semibold))
-                .foregroundStyle(.white)
-
-            Text("SpaceX broadcasts are loaded through the X API. Add a Bearer Token in Settings to fetch the latest posts and streams.")
-                .font(.body)
-                .foregroundStyle(.gray)
-                .lineLimit(3)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Button {
-                openSettings()
-            } label: {
-                Label("Open Settings", systemImage: "gear")
-                    .font(.title3.weight(.semibold))
-            }
-            .buttonStyle(.bordered)
-        }
-        .padding(32)
-        .frame(maxWidth: .infinity, minHeight: 260, alignment: .leading)
-        .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.white.opacity(0.14), lineWidth: 1)
-        }
     }
 }
 
