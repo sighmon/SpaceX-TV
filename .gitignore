@@ -3,3 +3,6 @@ build/
 DerivedData/
 *.xcuserstate
 xcuserdata/
+.envrc
+scripts/.envrc
+

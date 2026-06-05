@@ -17,6 +17,7 @@ final class BroadcastLibrary: ObservableObject {
     @Published var xAPIBearerToken: String {
         didSet {
             tokenStore.save(xAPIBearerToken)
+            defaults.removeObject(forKey: Keys.dailyCache)
         }
     }
     @Published var showsPlayerDebugOverlay: Bool {
@@ -36,7 +37,8 @@ final class BroadcastLibrary: ObservableObject {
     private let calendar: Calendar
     private let pageSize = 10
     private let maximumRequestedLimit = 20
-    private let cacheVersion = 15
+    private let cacheVersion = 16
+    private let xAPICacheURL = URL(string: "https://www.sighmon.com/spacex-tv/x-cache.json")!
     private var cachedBroadcasts: [Broadcast] = []
     private var requestedLimit = 0
 
@@ -92,11 +94,6 @@ final class BroadcastLibrary: ObservableObject {
 #endif
 
     func load() async {
-        guard hasXAPIBearerToken else {
-            showMissingTokenState()
-            return
-        }
-
         if restoreDailyCache(minimumLimit: pageSize) {
             return
         }
@@ -104,20 +101,11 @@ final class BroadcastLibrary: ObservableObject {
     }
 
     func refresh() async {
-        guard hasXAPIBearerToken else {
-            showMissingTokenState()
-            return
-        }
-
         loadingState = .loading
         isLoadingMore = false
         debugLines = ["Starting refresh"]
         do {
-            let token = xAPIBearerToken.trimmingCharacters(in: .whitespacesAndNewlines)
-            let result = try await discovery.discoverRecentSpaceXBroadcasts(
-                limit: pageSize,
-                xAPIBearerToken: token.isEmpty ? nil : token
-            )
+            let result = try await discoverRecentSpaceXBroadcasts(limit: pageSize)
             cachedBroadcasts = result.broadcasts
             broadcasts = result.broadcasts
             requestedLimit = pageSize
@@ -140,10 +128,6 @@ final class BroadcastLibrary: ObservableObject {
     }
 
     func loadMore() async {
-        guard hasXAPIBearerToken else {
-            showMissingTokenState()
-            return
-        }
         guard !isLoadingMore else { return }
         guard canLoadMore else { return }
 
@@ -157,11 +141,7 @@ final class BroadcastLibrary: ObservableObject {
         }
 
         do {
-            let token = xAPIBearerToken.trimmingCharacters(in: .whitespacesAndNewlines)
-            let result = try await discovery.discoverRecentSpaceXBroadcasts(
-                limit: targetLimit,
-                xAPIBearerToken: token.isEmpty ? nil : token
-            )
+            let result = try await discoverRecentSpaceXBroadcasts(limit: targetLimit)
             cachedBroadcasts = result.broadcasts
             broadcasts = result.broadcasts
             requestedLimit = targetLimit
@@ -178,6 +158,21 @@ final class BroadcastLibrary: ObservableObject {
                 debugLines.append("Load more failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)")
             }
         }
+    }
+
+    private func discoverRecentSpaceXBroadcasts(limit: Int) async throws -> BroadcastDiscoveryResult {
+        let token = xAPIBearerToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !token.isEmpty {
+            return try await discovery.discoverRecentSpaceXBroadcasts(
+                limit: limit,
+                xAPIBearerToken: token
+            )
+        }
+
+        return try await discovery.discoverRecentSpaceXBroadcasts(
+            limit: limit,
+            xAPICacheURL: xAPICacheURL
+        )
     }
 
     private func restoreDailyCache(minimumLimit: Int) -> Bool {

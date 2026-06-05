@@ -37,13 +37,34 @@ struct BroadcastDiscovery {
         let timelineLimit = timelineFetchLimit(for: limit)
         report.add("X API timeline fetch limit: \(timelineLimit)")
 
-        var candidates = try await recentSpaceXBroadcastCandidates(
+        let candidates = try await recentSpaceXBroadcastCandidates(
             timelineLimit: timelineLimit,
             xAPIBearerToken: xAPIBearerToken,
             report: &report
         )
         report.add("Candidate statuses: \(candidates.count)")
 
+        return try await discoveryResult(from: candidates, report: &report)
+    }
+
+    func discoverRecentSpaceXBroadcasts(limit: Int = 10, xAPICacheURL: URL) async throws -> BroadcastDiscoveryResult {
+        var report = DiscoveryReport()
+        report.add("Starting SpaceX post discovery")
+        let timelineLimit = timelineFetchLimit(for: limit)
+        report.add("X API cache target timeline limit: \(timelineLimit)")
+
+        let candidates = try await recentSpaceXBroadcastCandidatesFromCache(
+            cacheURL: xAPICacheURL,
+            timelineLimit: timelineLimit,
+            report: &report
+        )
+        report.add("Candidate statuses: \(candidates.count)")
+
+        return try await discoveryResult(from: candidates, report: &report)
+    }
+
+    private func discoveryResult(from initialCandidates: [BroadcastCandidate], report: inout DiscoveryReport) async throws -> BroadcastDiscoveryResult {
+        var candidates = initialCandidates
         do {
             let starshipFilmCandidates = try await recentStarshipFilmCandidates(report: &report)
             candidates = deduplicatedCandidates(candidates + starshipFilmCandidates)
@@ -190,6 +211,51 @@ struct BroadcastDiscovery {
         report.add("X API returned \(timeline.posts.count) SpaceX posts")
         report.add("X API included \(timeline.mediaByKey.count) media objects")
 
+        return recentSpaceXBroadcastCandidates(pinnedTimeline: pinnedTimeline, timeline: timeline, report: &report)
+    }
+
+    private func recentSpaceXBroadcastCandidatesFromCache(cacheURL: URL, timelineLimit: Int, report: inout DiscoveryReport) async throws -> [BroadcastCandidate] {
+        report.add("Using X API cache for timeline discovery")
+        report.add("X API cache GET: \(cacheURL.absoluteString)")
+        var request = URLRequest(url: cacheURL)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await session.data(for: request)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        report.add("X API cache HTTP \(statusCode), \(data.count) bytes")
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200 ..< 300).contains(httpResponse.statusCode) else {
+            throw BroadcastDiscoveryError.invalidResponse
+        }
+
+        let cache: XAPICacheResponse
+        do {
+            cache = try xAPIDecoder().decode(XAPICacheResponse.self, from: data)
+        } catch {
+            report.add("X API cache decode failed: \(debugMessage(for: error))")
+            throw BroadcastDiscoveryFailure(error: BroadcastDiscoveryError.invalidResponse, report: report)
+        }
+
+        if let generatedAt = cache.generatedAt {
+            report.add("X API cache generated at: \(ISO8601DateFormatter().string(from: generatedAt))")
+        }
+        report.add("X API cache source: \(cache.source ?? "unknown")")
+
+        let pinnedTimeline = cache.pinned.map(xAPITimeline(from:))
+        let timeline = xAPITimeline(from: cache.timeline)
+        let limitedTimeline = XAPITimeline(
+            posts: Array(timeline.posts.prefix(timelineLimit)),
+            mediaByKey: timeline.mediaByKey,
+            includedPostsByID: timeline.includedPostsByID
+        )
+        report.add("X API cache returned \(limitedTimeline.posts.count) SpaceX posts")
+        report.add("X API cache included \(limitedTimeline.mediaByKey.count) media objects")
+
+        return recentSpaceXBroadcastCandidates(pinnedTimeline: pinnedTimeline, timeline: limitedTimeline, report: &report)
+    }
+
+    private func recentSpaceXBroadcastCandidates(pinnedTimeline: XAPITimeline?, timeline: XAPITimeline, report: inout DiscoveryReport) -> [BroadcastCandidate] {
         let pinnedCandidates = pinnedTimeline?.posts.compactMap {
             candidate(from: $0, timeline: pinnedTimeline ?? .empty, isPinned: true, report: &report)
         } ?? []
@@ -199,6 +265,17 @@ struct BroadcastDiscovery {
         }
 
         return deduplicatedCandidates(pinnedCandidates + timelineCandidates)
+    }
+
+    private func xAPITimeline(from response: XAPIPostsResponse) -> XAPITimeline {
+        let mediaByKey = Dictionary(
+            uniqueKeysWithValues: (response.includes?.media ?? []).map { ($0.mediaKey, $0) }
+        )
+        let includedPostsByID = Dictionary(
+            uniqueKeysWithValues: (response.includes?.tweets ?? []).map { ($0.id, $0) }
+        )
+
+        return XAPITimeline(posts: response.data ?? [], mediaByKey: mediaByKey, includedPostsByID: includedPostsByID)
     }
 
     private func candidate(
@@ -717,6 +794,22 @@ private struct XAPIUser: Decodable {
 private struct XAPIPostsResponse: Decodable {
     var data: [XAPIPost]?
     var includes: XAPIIncludes?
+}
+
+private struct XAPICacheResponse: Decodable {
+    var generatedAt: Date?
+    var source: String?
+    var user: XAPIUserResponse
+    var pinned: XAPIPostsResponse?
+    var timeline: XAPIPostsResponse
+
+    enum CodingKeys: String, CodingKey {
+        case generatedAt = "generated_at"
+        case source
+        case user
+        case pinned
+        case timeline
+    }
 }
 
 private struct XAPIPost: Decodable {
