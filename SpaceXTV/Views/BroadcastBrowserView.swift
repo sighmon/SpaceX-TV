@@ -236,72 +236,100 @@ struct BroadcastBrowserView: View {
     }
 
     private func broadcastGrid(width: CGFloat) -> some View {
-        let columns = gridColumns(for: width)
-        return LazyVGrid(
-            columns: columns,
-            alignment: .leading,
-            spacing: gridSpacing(for: width)
-        ) {
+        let spacing = gridSpacing(for: width)
+        let columnCount = gridColumnCount(for: width)
+        let cardWidth = (width - (spacing * CGFloat(columnCount - 1))) / CGFloat(columnCount)
+
+        return Grid(alignment: .leading, horizontalSpacing: spacing, verticalSpacing: spacing) {
             if !xBroadcasts.isEmpty {
-                broadcastCards(xBroadcasts)
+                broadcastRows(xBroadcasts, columnCount: columnCount, cardWidth: cardWidth)
 
                 if library.canLoadMore {
-                    Button {
-                        Task { await library.loadMore() }
-                    } label: {
-                        HStack(spacing: 14) {
-                            if library.isLoadingMore {
-                                ProgressView()
-                            } else {
-                                Image(systemName: "plus")
-                                    .font(.title3.weight(.semibold))
-                            }
-                            Text(library.isLoadingMore ? "Loading more broadcasts..." : "Load More")
-                                .font(.title3.weight(.semibold))
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 86)
+                    GridRow {
+                        loadMoreButton(width: width)
+                            .gridCellColumns(columnCount)
                     }
-                    .buttonStyle(.bordered)
-                    .disabled(library.isLoadingMore)
-                    .gridCellColumns(columns.count)
                     .id("load-more")
                 }
             }
 
             if !starshipFilms.isEmpty {
-                sectionHeader("STARSHIP FILMS", width: width)
-                    .gridCellColumns(columns.count)
-                    .id("starship-films-header")
-                broadcastCards(starshipFilms)
+                GridRow {
+                    sectionHeader("STARSHIP FILMS", width: width)
+                        .gridCellColumns(columnCount)
+                }
+                .id("starship-films-header")
+                broadcastRows(starshipFilms, columnCount: columnCount, cardWidth: cardWidth)
             }
 
             if !starshipFlightTests.isEmpty {
-                sectionHeader("STARSHIP TEST FLIGHTS", width: width)
-                    .gridCellColumns(columns.count)
-                    .id("starship-flight-tests-header")
-                broadcastCards(starshipFlightTests)
+                GridRow {
+                    sectionHeader("STARSHIP TEST FLIGHTS", width: width)
+                        .gridCellColumns(columnCount)
+                }
+                .id("starship-flight-tests-header")
+                broadcastRows(starshipFlightTests, columnCount: columnCount, cardWidth: cardWidth)
             }
         }
         .frame(width: width, alignment: .leading)
     }
 
     @ViewBuilder
-    private func broadcastCards(_ broadcasts: [Broadcast]) -> some View {
-        ForEach(broadcasts) { broadcast in
-            Button {
-                switch broadcast.contentKind {
-                case .video:
-                    selectedBroadcast = broadcast
-                case .gallery:
-                    selectedGallery = broadcast
+    private func broadcastRows(_ broadcasts: [Broadcast], columnCount: Int, cardWidth: CGFloat) -> some View {
+        ForEach(Array(stride(from: 0, to: broadcasts.count, by: columnCount)), id: \.self) { startIndex in
+            let endIndex = min(startIndex + columnCount, broadcasts.count)
+            GridRow {
+                ForEach(broadcasts[startIndex ..< endIndex]) { broadcast in
+                    broadcastButton(broadcast, width: cardWidth)
                 }
-            } label: {
-                BroadcastCard(broadcast: broadcast, isFocused: focusedID == broadcast.id)
+
+                if endIndex - startIndex < columnCount {
+                    ForEach(0 ..< (columnCount - (endIndex - startIndex)), id: \.self) { _ in
+                        Color.clear
+                            .frame(width: cardWidth)
+                            .gridCellUnsizedAxes([.horizontal, .vertical])
+                    }
+                }
             }
-            .buttonStyle(.plain)
-            .focusEffectDisabled()
-            .focused($focusedID, equals: broadcast.id)
         }
+    }
+
+    private func broadcastButton(_ broadcast: Broadcast, width: CGFloat) -> some View {
+        Button {
+            switch broadcast.contentKind {
+            case .video:
+                selectedBroadcast = broadcast
+            case .gallery:
+                selectedGallery = broadcast
+            }
+        } label: {
+            BroadcastCard(broadcast: broadcast, isFocused: focusedID == broadcast.id)
+                .frame(width: width)
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .focused($focusedID, equals: broadcast.id)
+    }
+
+    private func loadMoreButton(width: CGFloat) -> some View {
+        Button {
+            Task { await library.loadMore() }
+        } label: {
+            HStack(spacing: 14) {
+                if library.isLoadingMore {
+                    ProgressView()
+                } else {
+                    Image(systemName: "plus")
+                        .font(.title3.weight(.semibold))
+                }
+                Text(library.isLoadingMore ? "Loading more broadcasts..." : "Load More")
+                    .font(.title3.weight(.semibold))
+            }
+            .frame(width: width)
+            .frame(minHeight: 86)
+        }
+        .buttonStyle(.bordered)
+        .disabled(library.isLoadingMore)
     }
 
     private func sectionHeader(
@@ -343,13 +371,8 @@ struct BroadcastBrowserView: View {
         width < 900 ? 32 : 56
     }
 
-    private func gridColumns(for width: CGFloat) -> [GridItem] {
-        let spacing = gridSpacing(for: width)
-        let columnCount = horizontalSizeClass == .regular && width >= 620 ? 2 : 1
-        return Array(
-            repeating: GridItem(.flexible(minimum: 0), spacing: spacing),
-            count: columnCount
-        )
+    private func gridColumnCount(for width: CGFloat) -> Int {
+        horizontalSizeClass == .regular && width >= 620 ? 2 : 1
     }
 
     private func logoWidth(for width: CGFloat) -> CGFloat {
