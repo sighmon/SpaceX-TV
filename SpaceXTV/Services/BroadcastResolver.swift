@@ -145,7 +145,8 @@ struct BroadcastResolver {
     }
 
     private func xBroadcastStream(broadcastID: String) async throws -> ResolvedBroadcast {
-        let webBearerToken = try await xWebBearerToken()
+        let webConfiguration = try await xWebConfiguration()
+        let webBearerToken = webConfiguration.bearerToken
         let guestToken = try await xGuestToken(bearerToken: webBearerToken)
 
         do {
@@ -182,16 +183,23 @@ struct BroadcastResolver {
             return try await xTweetBroadcastStream(
                 tweetID: broadcastID,
                 bearerToken: webBearerToken,
-                guestToken: guestToken
+                guestToken: guestToken,
+                queryID: webConfiguration.tweetResultByRestIDQueryID
             )
         }
     }
 
-    private func xTweetBroadcastStream(tweetID: String, bearerToken: String, guestToken: String) async throws -> ResolvedBroadcast {
+    private func xTweetBroadcastStream(
+        tweetID: String,
+        bearerToken: String,
+        guestToken: String,
+        queryID: String?
+    ) async throws -> ResolvedBroadcast {
         let broadcast = try await xTweetBroadcast(
             tweetID: tweetID,
             bearerToken: bearerToken,
-            guestToken: guestToken
+            guestToken: guestToken,
+            queryID: queryID
         )
         let source = try await xLiveVideoSource(
             mediaKey: broadcast.mediaKey,
@@ -248,8 +256,16 @@ struct BroadcastResolver {
         return broadcast
     }
 
-    private func xTweetBroadcast(tweetID: String, bearerToken: String, guestToken: String) async throws -> XTweetBroadcast {
-        var components = URLComponents(string: "https://x.com/i/api/graphql/SgZWKwvBiOKrSC0QeOGvXw/TweetResultByRestId")!
+    private func xTweetBroadcast(
+        tweetID: String,
+        bearerToken: String,
+        guestToken: String,
+        queryID: String?
+    ) async throws -> XTweetBroadcast {
+        guard let queryID, !queryID.isEmpty else {
+            throw BroadcastResolverError.invalidResponse
+        }
+        var components = URLComponents(string: "https://x.com/i/api/graphql/\(queryID)/TweetResultByRestId")!
         components.queryItems = [
             URLQueryItem(
                 name: "variables",
@@ -313,21 +329,38 @@ struct BroadcastResolver {
     }
 
     private func xWebBearerToken() async throws -> String {
+        try await xWebConfiguration().bearerToken
+    }
+
+    private func xWebConfiguration() async throws -> XWebConfiguration {
         let homeURL = URL(string: "https://x.com/")!
         let home = try await string(from: homeURL)
-        if let token = webBearerToken(in: home) {
-            return token
-        }
+        var bearerToken = webBearerToken(in: home)
+        var tweetResultQueryID = tweetResultByRestIDQueryID(in: home)
 
         let scriptURLs = webScriptURLs(in: home)
         for scriptURL in scriptURLs.prefix(10) {
+            guard bearerToken == nil || tweetResultQueryID == nil else {
+                break
+            }
+
             let script = try await string(from: scriptURL)
-            if let token = webBearerToken(in: script) {
-                return token
+            if bearerToken == nil {
+                bearerToken = webBearerToken(in: script)
+            }
+            if tweetResultQueryID == nil {
+                tweetResultQueryID = tweetResultByRestIDQueryID(in: script)
             }
         }
 
-        throw BroadcastResolverError.missingWebBearerToken
+        guard let bearerToken else {
+            throw BroadcastResolverError.missingWebBearerToken
+        }
+
+        return XWebConfiguration(
+            bearerToken: bearerToken,
+            tweetResultByRestIDQueryID: tweetResultQueryID
+        )
     }
 
     private func string(from url: URL) async throws -> String {
@@ -388,6 +421,13 @@ struct BroadcastResolver {
         }
 
         return nil
+    }
+
+    private func tweetResultByRestIDQueryID(in body: String) -> String? {
+        firstMatch(
+            pattern: #"queryId:"([^"]+)",operationName:"TweetResultByRestId""#,
+            in: body
+        )
     }
 
     private func xAPIData(for request: URLRequest) async throws -> Data {
@@ -537,6 +577,11 @@ private struct XGuestTokenResponse: Decodable {
     enum CodingKeys: String, CodingKey {
         case guestToken = "guest_token"
     }
+}
+
+private struct XWebConfiguration {
+    var bearerToken: String
+    var tweetResultByRestIDQueryID: String?
 }
 
 private struct XBroadcast: Decodable {
