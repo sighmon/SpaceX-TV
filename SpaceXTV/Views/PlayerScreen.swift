@@ -48,7 +48,7 @@ final class PlayerViewModel: ObservableObject {
         var request = URLRequest(url: streamURL)
         request.httpMethod = isPlaylist ? "GET" : "HEAD"
         request.setValue("Mozilla/5.0 AppleTV SpaceXTV/1.0", forHTTPHeaderField: "User-Agent")
-        request.setValue("https://x.com/", forHTTPHeaderField: "Referer")
+        request.setValue(playbackReferer(for: streamURL), forHTTPHeaderField: "Referer")
         request.timeoutInterval = 15
 
         do {
@@ -67,6 +67,22 @@ final class PlayerViewModel: ObservableObject {
             debugLines.append("\(isPlaylist ? "HLS" : "Stream") preflight failed: \(error.localizedDescription)")
         }
     }
+}
+
+private func playbackReferer(for streamURL: URL) -> String {
+    guard let host = streamURL.host?.lowercased() else {
+        return "https://x.com/"
+    }
+
+    if host.contains("spacex.com") || host.contains("azureedge.us") {
+        return "https://www.spacex.com/"
+    }
+
+    if host.contains("pscp.tv") || host.contains("periscope.tv") {
+        return "https://www.periscope.tv/"
+    }
+
+    return "https://x.com/"
 }
 
 struct PlayerScreen: View {
@@ -232,6 +248,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
         let controller = AVPlayerViewController()
         controller.player = context.coordinator.makePlayer(for: streamURL)
         controller.showsPlaybackControls = true
+        controller.videoGravity = .resizeAspect
         context.coordinator.installTapRecognizer(on: controller.view)
         controller.player?.play()
         return controller
@@ -313,7 +330,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
             onDebug("Creating player for: \(streamURL.absoluteString)")
             let headers = [
                 "User-Agent": "Mozilla/5.0 AppleTV SpaceXTV/1.0",
-                "Referer": "https://x.com/",
+                "Referer": referer(for: streamURL),
             ]
             let asset = AVURLAsset(
                 url: streamURL,
@@ -321,15 +338,20 @@ struct TVPlayerView: UIViewControllerRepresentable {
             )
             let item = AVPlayerItem(asset: asset)
             item.preferredPeakBitRate = 0
-            item.preferredForwardBufferDuration = 8
+            item.preferredForwardBufferDuration = 20
             if #available(tvOS 11.0, iOS 11.0, *) {
                 item.preferredMaximumResolution = CGSize(width: 3840, height: 2160)
             }
             onDebug("Player preferences: peakBitRate \(Int(item.preferredPeakBitRate)), forwardBuffer \(Int(item.preferredForwardBufferDuration))s, maxResolution \(Int(item.preferredMaximumResolution.width))x\(Int(item.preferredMaximumResolution.height))")
             observe(item)
             let player = AVPlayer(playerItem: item)
+            player.automaticallyWaitsToMinimizeStalling = true
             observe(player)
             return player
+        }
+
+        private func referer(for streamURL: URL) -> String {
+            playbackReferer(for: streamURL)
         }
 
         private func observe(_ player: AVPlayer) {

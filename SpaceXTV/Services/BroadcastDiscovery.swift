@@ -1179,7 +1179,7 @@ private struct SpaceXMediaItem: Decodable {
     var poster: SpaceXMediaPoster?
 
     var bestStreamURL: URL? {
-        uhdStreamingLink ?? autoStreamingLink ?? fhdStreamingLink ?? hdStreamingLink ?? uhdLink ?? fhdLink ?? hdLink
+        autoStreamingLink ?? fhdStreamingLink ?? hdStreamingLink ?? uhdStreamingLink ?? fhdLink ?? hdLink ?? uhdLink
     }
 
     var bestSubtitle: String {
