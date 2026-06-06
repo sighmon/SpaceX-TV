@@ -23,6 +23,43 @@ enum BroadcastResolverError: LocalizedError {
 struct BroadcastResolver {
     var session: URLSession = .shared
 
+    private static let tweetResultFeatures: [String: Bool] = [
+        "creator_subscriptions_tweet_preview_api_enabled": true,
+        "premium_content_api_read_enabled": true,
+        "communities_web_enable_tweet_community_results_fetch": true,
+        "c9s_tweet_anatomy_moderator_badge_enabled": true,
+        "responsive_web_grok_analyze_button_fetch_trends_enabled": true,
+        "responsive_web_grok_analyze_post_followups_enabled": true,
+        "rweb_cashtags_composer_attachment_enabled": true,
+        "responsive_web_jetfuel_frame": true,
+        "responsive_web_grok_share_attachment_enabled": true,
+        "responsive_web_grok_annotations_enabled": true,
+        "articles_preview_enabled": true,
+        "responsive_web_edit_tweet_api_enabled": true,
+        "graphql_is_translatable_rweb_tweet_is_translatable_enabled": true,
+        "view_counts_everywhere_api_enabled": true,
+        "longform_notetweets_consumption_enabled": true,
+        "responsive_web_twitter_article_tweet_consumption_enabled": true,
+        "tweet_awards_web_tipping_enabled": false,
+        "responsive_web_grok_show_grok_translated_post": true,
+        "responsive_web_grok_analysis_button_from_backend": true,
+        "standardized_nudges_misinfo": true,
+        "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": true,
+        "longform_notetweets_rich_text_read_enabled": true,
+        "longform_notetweets_inline_media_enabled": true,
+        "responsive_web_grok_image_annotation_enabled": true,
+        "responsive_web_grok_imagine_annotation_enabled": true,
+        "responsive_web_grok_community_note_auto_translation_is_enabled": true,
+        "responsive_web_enhance_cards_enabled": true,
+    ]
+
+    private static let tweetResultFieldToggles: [String: Bool] = [
+        "withArticleRichContentState": true,
+        "withArticlePlainText": true,
+        "withGrokAnalyze": true,
+        "withDisallowedReplyControls": true,
+    ]
+
     func resolve(_ broadcast: Broadcast) async throws -> ResolvedBroadcast {
         switch broadcast.sourceKind {
         case .hls:
@@ -110,14 +147,55 @@ struct BroadcastResolver {
     private func xBroadcastStream(broadcastID: String) async throws -> ResolvedBroadcast {
         let webBearerToken = try await xWebBearerToken()
         let guestToken = try await xGuestToken(bearerToken: webBearerToken)
-        let broadcast = try await xBroadcast(
-            broadcastID: broadcastID,
-            bearerToken: webBearerToken,
+
+        do {
+            let broadcast = try await xBroadcast(
+                broadcastID: broadcastID,
+                bearerToken: webBearerToken,
+                guestToken: guestToken
+            )
+            let source = try await xLiveVideoSource(
+                mediaKey: broadcast.mediaKey,
+                bearerToken: webBearerToken,
+                guestToken: guestToken
+            )
+
+            guard let streamURL = source.noRedirectPlaybackURL ?? source.location else {
+                throw BroadcastResolverError.missingStream
+            }
+
+            var thumbnailURL = broadcast.bestThumbnailURL ?? source.thumbnailURL
+            if thumbnailURL == nil {
+                thumbnailURL = try? await broadcastPageThumbnailURL(broadcastID: broadcastID)
+            }
+
+            return ResolvedBroadcast(
+                title: broadcast.title,
+                streamURL: try await highestQualityStreamURL(from: streamURL),
+                thumbnailURL: thumbnailURL,
+                isLive: broadcast.isLive
+            )
+        } catch {
+            guard broadcastID.allSatisfy(\.isNumber) else {
+                throw error
+            }
+            return try await xTweetBroadcastStream(
+                tweetID: broadcastID,
+                bearerToken: webBearerToken,
+                guestToken: guestToken
+            )
+        }
+    }
+
+    private func xTweetBroadcastStream(tweetID: String, bearerToken: String, guestToken: String) async throws -> ResolvedBroadcast {
+        let broadcast = try await xTweetBroadcast(
+            tweetID: tweetID,
+            bearerToken: bearerToken,
             guestToken: guestToken
         )
         let source = try await xLiveVideoSource(
             mediaKey: broadcast.mediaKey,
-            bearerToken: webBearerToken,
+            bearerToken: bearerToken,
             guestToken: guestToken
         )
 
@@ -125,15 +203,10 @@ struct BroadcastResolver {
             throw BroadcastResolverError.missingStream
         }
 
-        var thumbnailURL = broadcast.bestThumbnailURL ?? source.thumbnailURL
-        if thumbnailURL == nil {
-            thumbnailURL = try? await broadcastPageThumbnailURL(broadcastID: broadcastID)
-        }
-
         return ResolvedBroadcast(
             title: broadcast.title,
             streamURL: try await highestQualityStreamURL(from: streamURL),
-            thumbnailURL: thumbnailURL,
+            thumbnailURL: broadcast.thumbnailURL ?? source.thumbnailURL,
             isLive: broadcast.isLive
         )
     }
@@ -173,6 +246,51 @@ struct BroadcastResolver {
             throw BroadcastResolverError.invalidResponse
         }
         return broadcast
+    }
+
+    private func xTweetBroadcast(tweetID: String, bearerToken: String, guestToken: String) async throws -> XTweetBroadcast {
+        var components = URLComponents(string: "https://x.com/i/api/graphql/SgZWKwvBiOKrSC0QeOGvXw/TweetResultByRestId")!
+        components.queryItems = [
+            URLQueryItem(
+                name: "variables",
+                value: jsonQueryValue([
+                    "tweetId": tweetID,
+                    "withCommunity": false,
+                    "includePromotedContent": false,
+                    "withVoice": false,
+                ])
+            ),
+            URLQueryItem(name: "features", value: jsonQueryValue(Self.tweetResultFeatures)),
+            URLQueryItem(name: "fieldToggles", value: jsonQueryValue(Self.tweetResultFieldToggles)),
+        ]
+
+        guard let url = components.url else {
+            throw BroadcastResolverError.invalidResponse
+        }
+
+        let request = xWebRequest(url: url, bearerToken: bearerToken, guestToken: guestToken)
+        let data = try await xAPIData(for: request)
+        let response = try JSONDecoder().decode(XTweetResultResponse.self, from: data)
+        guard let bindingValues = response.data.tweetResult.result.card?.legacy.bindingValues else {
+            throw BroadcastResolverError.missingStream
+        }
+
+        let values = Dictionary(uniqueKeysWithValues: bindingValues.map { ($0.key, $0.value) })
+        guard let mediaKey = values["broadcast_media_key"]?.stringValue else {
+            throw BroadcastResolverError.missingStream
+        }
+
+        return XTweetBroadcast(
+            mediaKey: mediaKey,
+            title: values["broadcast_title"]?.stringValue,
+            thumbnailURL: [
+                values["broadcast_thumbnail_original"]?.imageValue?.url,
+                values["broadcast_thumbnail_x_large"]?.imageValue?.url,
+                values["broadcast_thumbnail"]?.imageValue?.url,
+                values["broadcast_pre_live_slate_x_large"]?.imageValue?.url,
+            ].compactMap { $0 }.first,
+            state: values["broadcast_state"]?.stringValue
+        )
     }
 
     private func xLiveVideoSource(mediaKey: String, bearerToken: String, guestToken: String) async throws -> XLiveVideoSource {
@@ -279,6 +397,14 @@ struct BroadcastResolver {
             throw BroadcastResolverError.invalidResponse
         }
         return data
+    }
+
+    private func jsonQueryValue(_ value: Any) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: value),
+              let string = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return string
     }
 
     private func highestQualityStreamURL(from streamURL: URL) async throws -> URL {
@@ -459,6 +585,67 @@ private struct XBroadcast: Decodable {
         case thumbnailURLMedium = "thumbnail_url_medium"
         case thumbnailURLLarge = "thumbnail_url_large"
         case state
+    }
+}
+
+private struct XTweetBroadcast {
+    var mediaKey: String
+    var title: String?
+    var thumbnailURL: URL?
+    var state: String?
+
+    var isLive: Bool? {
+        guard let state else { return nil }
+        return state.lowercased() != "ended"
+    }
+}
+
+private struct XTweetResultResponse: Decodable {
+    var data: DataContainer
+
+    struct DataContainer: Decodable {
+        var tweetResult: TweetResult
+    }
+
+    struct TweetResult: Decodable {
+        var result: Tweet
+    }
+
+    struct Tweet: Decodable {
+        var card: Card?
+    }
+
+    struct Card: Decodable {
+        var legacy: Legacy
+    }
+
+    struct Legacy: Decodable {
+        var bindingValues: [BindingValue]
+
+        enum CodingKeys: String, CodingKey {
+            case bindingValues = "binding_values"
+        }
+    }
+
+    struct BindingValue: Decodable {
+        var key: String
+        var value: Value
+    }
+
+    struct Value: Decodable {
+        var stringValue: String?
+        var booleanValue: Bool?
+        var imageValue: ImageValue?
+
+        enum CodingKeys: String, CodingKey {
+            case stringValue = "string_value"
+            case booleanValue = "boolean_value"
+            case imageValue = "image_value"
+        }
+    }
+
+    struct ImageValue: Decodable {
+        var url: URL?
     }
 }
 
