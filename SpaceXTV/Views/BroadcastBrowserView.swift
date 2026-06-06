@@ -31,7 +31,9 @@ struct BroadcastBrowserView: View {
     }
 
     private var xBroadcasts: [Broadcast] {
-        visibleBroadcasts.filter { $0.sourceKind == .xBroadcast }
+        visibleBroadcasts.filter {
+            $0.sourceKind == .xBroadcast && !$0.isStarshipFlightTest
+        }
     }
 
     private var starshipFilms: [Broadcast] {
@@ -42,7 +44,7 @@ struct BroadcastBrowserView: View {
 
     private var starshipFlightTests: [Broadcast] {
         visibleBroadcasts.filter {
-            $0.sourceKind == .hls && $0.subtitle.hasPrefix("Starship flight test")
+            $0.isStarshipFlightTest
         }
     }
 
@@ -235,58 +237,49 @@ struct BroadcastBrowserView: View {
 
     private func broadcastGrid(width: CGFloat) -> some View {
         let columns = gridColumns(for: width)
-        return VStack(alignment: .leading, spacing: gridSpacing(for: width)) {
+        return LazyVGrid(
+            columns: columns,
+            alignment: .leading,
+            spacing: gridSpacing(for: width)
+        ) {
             if !xBroadcasts.isEmpty {
-                LazyVGrid(
-                    columns: columns,
-                    alignment: .leading,
-                    spacing: gridSpacing(for: width)
-                ) {
-                    broadcastCards(xBroadcasts)
+                broadcastCards(xBroadcasts)
 
-                    if library.canLoadMore {
-                        Button {
-                            Task { await library.loadMore() }
-                        } label: {
-                            HStack(spacing: 14) {
-                                if library.isLoadingMore {
-                                    ProgressView()
-                                } else {
-                                    Image(systemName: "plus")
-                                        .font(.title3.weight(.semibold))
-                                }
-                                Text(library.isLoadingMore ? "Loading more broadcasts..." : "Load More")
+                if library.canLoadMore {
+                    Button {
+                        Task { await library.loadMore() }
+                    } label: {
+                        HStack(spacing: 14) {
+                            if library.isLoadingMore {
+                                ProgressView()
+                            } else {
+                                Image(systemName: "plus")
                                     .font(.title3.weight(.semibold))
                             }
-                            .frame(maxWidth: .infinity, minHeight: 86)
+                            Text(library.isLoadingMore ? "Loading more broadcasts..." : "Load More")
+                                .font(.title3.weight(.semibold))
                         }
-                        .buttonStyle(.bordered)
-                        .disabled(library.isLoadingMore)
-                        .gridCellColumns(columns.count)
+                        .frame(maxWidth: .infinity, minHeight: 86)
                     }
+                    .buttonStyle(.bordered)
+                    .disabled(library.isLoadingMore)
+                    .gridCellColumns(columns.count)
+                    .id("load-more")
                 }
             }
 
             if !starshipFilms.isEmpty {
                 sectionHeader("STARSHIP FILMS", width: width)
-                LazyVGrid(
-                    columns: columns,
-                    alignment: .leading,
-                    spacing: gridSpacing(for: width)
-                ) {
-                    broadcastCards(starshipFilms)
-                }
+                    .gridCellColumns(columns.count)
+                    .id("starship-films-header")
+                broadcastCards(starshipFilms)
             }
 
             if !starshipFlightTests.isEmpty {
                 sectionHeader("STARSHIP TEST FLIGHTS", width: width)
-                LazyVGrid(
-                    columns: columns,
-                    alignment: .leading,
-                    spacing: gridSpacing(for: width)
-                ) {
-                    broadcastCards(starshipFlightTests)
-                }
+                    .gridCellColumns(columns.count)
+                    .id("starship-flight-tests-header")
+                broadcastCards(starshipFlightTests)
             }
         }
         .frame(width: width, alignment: .leading)
@@ -606,7 +599,7 @@ private struct BroadcastCard: View {
     private var cardContent: some View {
         HStack(alignment: .bottom, spacing: 14) {
             VStack(alignment: .leading, spacing: 7) {
-                if broadcast.sourceKind == .hls {
+                if broadcast.sourceKind == .hls || broadcast.isStarshipFlightTest {
                     Text(broadcast.title)
                         .font(primaryTextFont)
                         .foregroundStyle(.white)
@@ -817,6 +810,12 @@ private final class ThumbnailImageLoader: ObservableObject {
 
         nextComponents.queryItems = queryItems
         return nextComponents.url
+    }
+}
+
+private extension Broadcast {
+    var isStarshipFlightTest: Bool {
+        subtitle.hasPrefix("Starship flight test")
     }
 }
 
