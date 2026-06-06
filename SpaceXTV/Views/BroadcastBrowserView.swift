@@ -30,6 +30,22 @@ struct BroadcastBrowserView: View {
         library.broadcasts
     }
 
+    private var xBroadcasts: [Broadcast] {
+        visibleBroadcasts.filter { $0.sourceKind == .xBroadcast }
+    }
+
+    private var starshipFilms: [Broadcast] {
+        visibleBroadcasts.filter {
+            $0.sourceKind == .hls && $0.subtitle.hasPrefix("Starship film")
+        }
+    }
+
+    private var starshipFlightTests: [Broadcast] {
+        visibleBroadcasts.filter {
+            $0.sourceKind == .hls && $0.subtitle.hasPrefix("Starship flight test")
+        }
+    }
+
     var body: some View {
         ZStack {
             LinearGradient(
@@ -219,48 +235,98 @@ struct BroadcastBrowserView: View {
 
     private func broadcastGrid(width: CGFloat) -> some View {
         let columns = gridColumns(for: width)
-        return LazyVGrid(
-            columns: columns,
-            alignment: .leading,
-            spacing: gridSpacing(for: width)
-        ) {
-            ForEach(visibleBroadcasts) { broadcast in
-                Button {
-                    switch broadcast.contentKind {
-                    case .video:
-                        selectedBroadcast = broadcast
-                    case .gallery:
-                        selectedGallery = broadcast
+        return VStack(alignment: .leading, spacing: gridSpacing(for: width)) {
+            if !xBroadcasts.isEmpty {
+                LazyVGrid(
+                    columns: columns,
+                    alignment: .leading,
+                    spacing: gridSpacing(for: width)
+                ) {
+                    broadcastCards(xBroadcasts)
+
+                    if library.canLoadMore {
+                        Button {
+                            Task { await library.loadMore() }
+                        } label: {
+                            HStack(spacing: 14) {
+                                if library.isLoadingMore {
+                                    ProgressView()
+                                } else {
+                                    Image(systemName: "plus")
+                                        .font(.title3.weight(.semibold))
+                                }
+                                Text(library.isLoadingMore ? "Loading more broadcasts..." : "Load More")
+                                    .font(.title3.weight(.semibold))
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 86)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(library.isLoadingMore)
+                        .gridCellColumns(columns.count)
                     }
-                } label: {
-                    BroadcastCard(broadcast: broadcast, isFocused: focusedID == broadcast.id)
                 }
-                .buttonStyle(.plain)
-                .focusEffectDisabled()
-                .focused($focusedID, equals: broadcast.id)
             }
 
-            if library.canLoadMore {
-                Button {
-                    Task { await library.loadMore() }
-                } label: {
-                    HStack(spacing: 14) {
-                        if library.isLoadingMore {
-                            ProgressView()
-                        } else {
-                            Image(systemName: "plus")
-                                .font(.title3.weight(.semibold))
-                        }
-                        Text(library.isLoadingMore ? "Loading more broadcasts..." : "Load More")
-                            .font(.title3.weight(.semibold))
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 86)
+            if !starshipFilms.isEmpty {
+                sectionHeader("STARSHIP FILMS", width: width)
+                LazyVGrid(
+                    columns: columns,
+                    alignment: .leading,
+                    spacing: gridSpacing(for: width)
+                ) {
+                    broadcastCards(starshipFilms)
                 }
-                .buttonStyle(.bordered)
-                .disabled(library.isLoadingMore)
-                .gridCellColumns(columns.count)
+            }
+
+            if !starshipFlightTests.isEmpty {
+                sectionHeader("STARSHIP TEST FLIGHTS", width: width)
+                LazyVGrid(
+                    columns: columns,
+                    alignment: .leading,
+                    spacing: gridSpacing(for: width)
+                ) {
+                    broadcastCards(starshipFlightTests)
+                }
             }
         }
+        .frame(width: width, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func broadcastCards(_ broadcasts: [Broadcast]) -> some View {
+        ForEach(broadcasts) { broadcast in
+            Button {
+                switch broadcast.contentKind {
+                case .video:
+                    selectedBroadcast = broadcast
+                case .gallery:
+                    selectedGallery = broadcast
+                }
+            } label: {
+                BroadcastCard(broadcast: broadcast, isFocused: focusedID == broadcast.id)
+            }
+            .buttonStyle(.plain)
+            .focusEffectDisabled()
+            .focused($focusedID, equals: broadcast.id)
+        }
+    }
+
+    private func sectionHeader(
+        _ title: String,
+        width: CGFloat,
+        showsDivider: Bool = true
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title)
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.white.opacity(0.72))
+
+            if showsDivider {
+                Divider()
+                    .overlay(.white.opacity(0.22))
+            }
+        }
+        .frame(width: width, alignment: .leading)
     }
 
     private func horizontalPadding(for width: CGFloat) -> CGFloat {
@@ -540,7 +606,12 @@ private struct BroadcastCard: View {
     private var cardContent: some View {
         HStack(alignment: .bottom, spacing: 14) {
             VStack(alignment: .leading, spacing: 7) {
-                if let tweetText = broadcast.tweetText, !tweetText.isEmpty {
+                if broadcast.sourceKind == .hls {
+                    Text(broadcast.title)
+                        .font(primaryTextFont)
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                } else if let tweetText = broadcast.tweetText, !tweetText.isEmpty {
                     Text(displayText(from: tweetText))
                         .font(primaryTextFont)
                         .foregroundStyle(.white)

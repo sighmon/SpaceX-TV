@@ -43,7 +43,7 @@ final class BroadcastLibrary: ObservableObject {
     private let calendar: Calendar
     private let pageSize = 10
     private let maximumRequestedLimit = 20
-    private let cacheVersion = 16
+    private let cacheVersion = 17
     private let xAPICacheURL = URL(string: "https://www.sighmon.com/spacex-tv/x-cache.json")!
     private var cachedBroadcasts: [Broadcast] = []
     private var requestedLimit = 0
@@ -53,7 +53,9 @@ final class BroadcastLibrary: ObservableObject {
     }
 
     var canLoadMore: Bool {
-        requestedLimit < maximumRequestedLimit
+        usesXAPIBearerToken
+            && hasXAPIBearerToken
+            && requestedLimit < maximumRequestedLimit
     }
 
     init(

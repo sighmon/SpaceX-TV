@@ -25,7 +25,8 @@ struct BroadcastDiscovery {
     private let timelineFetchMultiplier = 2
     private let minimumTimelineFetchLimit = 25
     private let maximumTimelineFetchLimit = 100
-    private let starshipPlaylistURL = URL(string: "https://content.spacex.com/api/spacex-website/media-playlist")!
+    private let starshipPlaylistURL = URL(string: "https://content.spacex.com/api/spacex-website/media-playlist/starship")!
+    private let starshipFlightTestsPlaylistURL = URL(string: "https://content.spacex.com/api/spacex-website/media-playlist/starship-flight-tests")!
 
     var resolver: BroadcastResolver {
         BroadcastResolver(session: session)
@@ -64,23 +65,31 @@ struct BroadcastDiscovery {
     }
 
     private func discoveryResult(from initialCandidates: [BroadcastCandidate], report: inout DiscoveryReport) async throws -> BroadcastDiscoveryResult {
-        var candidates = initialCandidates
+        var candidates = deduplicatedCandidates(initialCandidates)
+        var appendedStarshipFilmCandidates: [BroadcastCandidate] = []
+        var appendedStarshipFlightTestCandidates: [BroadcastCandidate] = []
         do {
-            let starshipFilmCandidates = try await recentStarshipFilmCandidates(report: &report)
-            candidates = deduplicatedCandidates(candidates + starshipFilmCandidates)
-            report.add("Starship film candidates: \(starshipFilmCandidates.count)")
+            appendedStarshipFilmCandidates = try await recentStarshipFilmCandidates(report: &report)
+            report.add("Starship film candidates: \(appendedStarshipFilmCandidates.count)")
         } catch {
             report.add("Starship film discovery failed: \(debugMessage(for: error))")
         }
+        do {
+            appendedStarshipFlightTestCandidates = try await starshipFlightTestCandidates(report: &report)
+            report.add("Starship flight test candidates: \(appendedStarshipFlightTestCandidates.count)")
+        } catch {
+            report.add("Starship flight test discovery failed: \(debugMessage(for: error))")
+        }
         candidates = candidates.sortedByPublishedDateDescending()
-        report.add("Merged candidates: \(candidates.count)")
+        let mergedCandidateCount = candidates.count + appendedStarshipFilmCandidates.count + appendedStarshipFlightTestCandidates.count
+        report.add("Merged candidates: \(mergedCandidateCount)")
 
-        guard !candidates.isEmpty else {
+        guard mergedCandidateCount > 0 else {
             throw BroadcastDiscoveryFailure(error: BroadcastDiscoveryError.noStatusesFound, report: report)
         }
 
         var selectedXItems: [DiscoveredBroadcastItem] = []
-        let xCandidates = candidates.filter { !$0.isStarshipFilm }
+        let xCandidates = candidates.filter { !$0.isAppendedSpaceXContent }
         for (index, candidate) in xCandidates.prefix(80).enumerated() {
             let statusURL = candidate.statusURL
 
@@ -126,13 +135,14 @@ struct BroadcastDiscovery {
             }
         }
 
-        let selectedStarshipItems = candidates
-            .filter(\.isStarshipFilm)
-            .sortedByPublishedDateDescending()
+        let selectedStarshipItems = (
+            appendedStarshipFilmCandidates.sortedByPublishedDateDescending()
+            + appendedStarshipFlightTestCandidates.sortedByPublishedDateDescending()
+        )
             .map { candidate in
                 DiscoveredBroadcastItem(candidate: candidate, broadcast: broadcast(from: candidate, streamURL: nil))
             }
-        report.add("Adding \(selectedStarshipItems.count) Starship films after X posts")
+        report.add("Adding \(selectedStarshipItems.count) SpaceX Starship items after X posts")
 
         let broadcasts = (
             selectedXItems
@@ -454,24 +464,10 @@ struct BroadcastDiscovery {
 
     private func recentStarshipFilmCandidates(report: inout DiscoveryReport) async throws -> [BroadcastCandidate] {
         report.add("SpaceX CMS GET: \(starshipPlaylistURL.path)")
-        var request = URLRequest(url: starshipPlaylistURL)
-        request.timeoutInterval = 15
+        let data = try await spaceXCMSData(from: starshipPlaylistURL, report: &report)
+        let playlist = try spaceXCMSDecoder().decode(SpaceXMediaPlaylist.self, from: data)
 
-        let (data, response) = try await session.data(for: request)
-        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-        report.add("SpaceX CMS HTTP \(statusCode), \(data.count) bytes")
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200 ..< 300).contains(httpResponse.statusCode) else {
-            throw BroadcastDiscoveryError.invalidResponse
-        }
-
-        let playlists = try spaceXCMSDecoder().decode([SpaceXMediaPlaylist].self, from: data)
-        let starshipMedia = playlists
-            .first { $0.link == "starship" }?
-            .media ?? []
-
-        return starshipMedia.compactMap { media in
+        return playlist.media.compactMap { media in
             guard let streamURL = media.bestStreamURL else { return nil }
             return BroadcastCandidate(
                 statusURL: streamURL,
@@ -483,9 +479,51 @@ struct BroadcastDiscovery {
                 publishedAt: media.date,
                 thumbnailURL: media.poster?.bestURL,
                 sourceKind: .hls,
-                artworkName: media.uhdStreamingLink == nil && media.uhdLink == nil ? "film" : "play.tv"
+                artworkName: media.uhdStreamingLink == nil && media.uhdLink == nil ? "film" : "play.tv",
+                isAppendedSpaceXContent: true
             )
         }
+    }
+
+    private func starshipFlightTestCandidates(report: inout DiscoveryReport) async throws -> [BroadcastCandidate] {
+        report.add("SpaceX CMS GET: \(starshipFlightTestsPlaylistURL.path)")
+        let data = try await spaceXCMSData(from: starshipFlightTestsPlaylistURL, report: &report)
+        let playlist = try spaceXCMSDecoder().decode(SpaceXMediaPlaylist.self, from: data)
+
+        return playlist.media.compactMap { media in
+            guard let streamURL = media.bestStreamURL else { return nil }
+            return BroadcastCandidate(
+                statusURL: streamURL,
+                dedupeKey: "spacex-starship-flight-test:\(media.documentID ?? media.link ?? streamURL.absoluteString)",
+                streamURL: nil,
+                title: media.title,
+                subtitle: media.bestStarshipFlightTestSubtitle,
+                tweetText: media.bestDescription,
+                publishedAt: media.date,
+                thumbnailURL: media.poster?.bestURL,
+                sourceKind: .hls,
+                artworkName: "play.tv",
+                isAppendedSpaceXContent: true
+            )
+        }
+    }
+
+    private func spaceXCMSData(from url: URL, report: inout DiscoveryReport) async throws -> Data {
+        var request = URLRequest(url: url)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Mozilla/5.0 AppleTV SpaceXTV/1.0", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 15
+
+        let (data, response) = try await session.data(for: request)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        report.add("SpaceX CMS HTTP \(statusCode), \(data.count) bytes")
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200 ..< 300).contains(httpResponse.statusCode) else {
+            throw BroadcastDiscoveryError.invalidResponse
+        }
+
+        return data
     }
 
     private func spaceXCMSDecoder() -> JSONDecoder {
@@ -678,9 +716,7 @@ private struct BroadcastCandidate {
     var isPinned: Bool = false
     var sourceKind: Broadcast.SourceKind = .xBroadcast
     var artworkName: String = "antenna.radiowaves.left.and.right"
-    var isStarshipFilm: Bool {
-        sourceKind == .hls
-    }
+    var isAppendedSpaceXContent: Bool = false
 
     init(
         statusURL: URL,
@@ -695,7 +731,8 @@ private struct BroadcastCandidate {
         allowsDeferredStreamResolution: Bool = false,
         isPinned: Bool = false,
         sourceKind: Broadcast.SourceKind = .xBroadcast,
-        artworkName: String = "antenna.radiowaves.left.and.right"
+        artworkName: String = "antenna.radiowaves.left.and.right",
+        isAppendedSpaceXContent: Bool = false
     ) {
         self.statusURL = statusURL
         if let dedupeKey, !dedupeKey.isEmpty {
@@ -714,6 +751,7 @@ private struct BroadcastCandidate {
         self.isPinned = isPinned
         self.sourceKind = sourceKind
         self.artworkName = artworkName
+        self.isAppendedSpaceXContent = isAppendedSpaceXContent
     }
 }
 
@@ -1078,6 +1116,13 @@ private struct SpaceXMediaItem: Decodable {
             return "Starship film · 4K"
         }
         return "Starship film"
+    }
+
+    var bestStarshipFlightTestSubtitle: String {
+        if uhdStreamingLink != nil || uhdLink != nil {
+            return "Starship flight test · 4K"
+        }
+        return "Starship flight test"
     }
 
     var bestDescription: String? {
