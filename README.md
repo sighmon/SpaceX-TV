@@ -58,10 +58,12 @@ Install the scripts somewhere outside the web root, for example:
 mkdir -p ~/scripts
 cp scripts/update_spacex_x_cache.rb ~/scripts/update_spacex_x_cache.rb
 cp scripts/run_spacex_cache_update.sh ~/scripts/run_spacex_cache_update.sh
-chmod 700 ~/scripts/update_spacex_x_cache.rb ~/scripts/run_spacex_cache_update.sh
+cp scripts/check_spacex_launch_cache.rb ~/scripts/check_spacex_launch_cache.rb
+cp scripts/run_spacex_launch_cache_check.sh ~/scripts/run_spacex_launch_cache_check.sh
+chmod 700 ~/scripts/update_spacex_x_cache.rb ~/scripts/run_spacex_cache_update.sh ~/scripts/check_spacex_launch_cache.rb ~/scripts/run_spacex_launch_cache_check.sh
 ```
 
-Edit `~/scripts/run_spacex_cache_update.sh` on the server and replace `YOUR_X_API_BEARER_TOKEN` and `YOUR_WEBHOST_USER`.
+Edit `~/scripts/run_spacex_cache_update.sh` and `~/scripts/run_spacex_launch_cache_check.sh` on the server and replace `YOUR_X_API_BEARER_TOKEN` and `YOUR_WEBHOST_USER`.
 
 Full crontab example for once a day at 6:00am Adelaide time:
 
@@ -70,7 +72,7 @@ CRON_TZ=Australia/Adelaide
 0 6 * * * /home/YOUR_WEBHOST_USER/scripts/run_spacex_cache_update.sh >> /home/YOUR_WEBHOST_USER/spacex-tv-x-cache.log 2>&1
 ```
 
-If your DreamHost cron editor does not honor `CRON_TZ`, set the panel schedule to the equivalent server-local time and keep the command itself unchanged.
+If your WebHost cron editor does not honor `CRON_TZ`, set the panel schedule to the equivalent server-local time and keep the command itself unchanged.
 
 The script logs timestamped start, success, and failure lines. To test the hosted copy over SSH:
 
@@ -80,10 +82,16 @@ tail -n 40 /home/YOUR_WEBHOST_USER/spacex-tv-x-cache.log
 ls -l /home/YOUR_WEBHOST_USER/www.sighmon.com/spacex-tv/x-cache.json
 ```
 
-DreamHost cron commands that use `setlock` should redirect after the `setlock` command, so lock failures or missing-command errors are captured too:
+WebHost cron commands that use `setlock` should redirect after the `setlock` command, so lock failures or missing-command errors are captured too:
 
 ```cron
 @daily /usr/bin/setlock -n /tmp/cronlock.YOUR_LOCK_ID /home/YOUR_WEBHOST_USER/scripts/run_spacex_cache_update.sh >> /home/YOUR_WEBHOST_USER/spacex-tv-x-cache.log 2>&1
+```
+
+To refresh the cache near launch time, add a second cron job that runs every five minutes. It checks the same SpaceX launch timing feeds used by the app countdown, and only runs the X cache updater when the next launch is within 10 minutes and the existing JSON cache does not already contain an `x.com/i/broadcasts/...` link. Use the same lock path as the daily updater so the two jobs cannot write the cache at the same time:
+
+```cron
+*/5 * * * * /usr/bin/setlock -n /tmp/cronlock.YOUR_LOCK_ID /home/YOUR_WEBHOST_USER/scripts/run_spacex_launch_cache_check.sh >> /home/YOUR_WEBHOST_USER/spacex-tv-x-cache.log 2>&1
 ```
 
 ## Build
