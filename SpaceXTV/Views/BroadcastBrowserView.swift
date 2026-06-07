@@ -9,6 +9,7 @@ struct BroadcastBrowserView: View {
     @State private var nextLaunch: NextLaunch?
     @State private var nextLaunchError: String?
     @State private var isLoadingNextLaunch = false
+    @State private var showsHomeFooter = false
     @FocusState private var focusedID: Broadcast.ID?
     private let launchScheduleService = SpaceXLaunchScheduleService()
     private let loadsNextLaunch: Bool
@@ -48,6 +49,11 @@ struct BroadcastBrowserView: View {
         }
     }
 
+    private var hasLoadedCards: Bool {
+        guard case .loaded = library.loadingState else { return false }
+        return !visibleBroadcasts.isEmpty
+    }
+
     var body: some View {
         ZStack {
             LinearGradient(
@@ -69,8 +75,11 @@ struct BroadcastBrowserView: View {
                         countdown(width: contentWidth)
                             .padding(.bottom, verticalSpacing(for: screenWidth))
                         content(width: contentWidth)
-                        homeFooter(width: contentWidth)
-                            .padding(.top, footerTopSpacing(for: screenWidth))
+                        if hasLoadedCards || showsHomeFooter {
+                            homeFooter(width: contentWidth)
+                                .opacity(showsHomeFooter ? 1 : 0)
+                                .padding(.top, footerTopSpacing(for: screenWidth))
+                        }
                     }
                     .frame(width: contentWidth, alignment: .leading)
                     .padding(.horizontal, horizontalPadding)
@@ -99,6 +108,12 @@ struct BroadcastBrowserView: View {
         }
         .onChange(of: library.usesXAPIBearerToken) { _, _ in
             Task { await library.load() }
+        }
+        .onChange(of: library.loadingState) { _, _ in
+            updateHomeFooterVisibility()
+        }
+        .onAppear {
+            updateHomeFooterVisibility()
         }
     }
 
@@ -196,6 +211,16 @@ struct BroadcastBrowserView: View {
         nextLaunch = nil
         nextLaunchError = nil
         isLoadingNextLaunch = false
+    }
+
+    private func updateHomeFooterVisibility() {
+        if hasLoadedCards {
+            withAnimation(.easeInOut(duration: 1.4).delay(0.25)) {
+                showsHomeFooter = true
+            }
+        } else {
+            showsHomeFooter = false
+        }
     }
 
     @ViewBuilder
