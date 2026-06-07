@@ -25,7 +25,10 @@ struct BroadcastDiscovery {
     private let timelineFetchMultiplier = 2
     private let minimumTimelineFetchLimit = 25
     private let maximumTimelineFetchLimit = 100
-    private let starshipPlaylistURL = URL(string: "https://content.spacex.com/api/spacex-website/media-playlist")!
+    private let starshipPlaylistURL = URL(string: "https://content.spacex.com/api/spacex-website/media-playlist/starship")!
+    private let starshipFlightTestsPlaylistURL = URL(string: "https://content.spacex.com/api/spacex-website/media-playlist/starship-flight-tests")!
+    private let launchTilesURL = URL(string: "https://content.spacex.com/api/spacex-website/launches-page-tiles")!
+    private let missionsBaseURL = URL(string: "https://content.spacex.com/api/spacex-website/missions/")!
 
     var resolver: BroadcastResolver {
         BroadcastResolver(session: session)
@@ -64,23 +67,31 @@ struct BroadcastDiscovery {
     }
 
     private func discoveryResult(from initialCandidates: [BroadcastCandidate], report: inout DiscoveryReport) async throws -> BroadcastDiscoveryResult {
-        var candidates = initialCandidates
+        var candidates = deduplicatedCandidates(initialCandidates)
+        var appendedStarshipFilmCandidates: [BroadcastCandidate] = []
+        var appendedStarshipFlightTestCandidates: [BroadcastCandidate] = []
         do {
-            let starshipFilmCandidates = try await recentStarshipFilmCandidates(report: &report)
-            candidates = deduplicatedCandidates(candidates + starshipFilmCandidates)
-            report.add("Starship film candidates: \(starshipFilmCandidates.count)")
+            appendedStarshipFilmCandidates = try await recentStarshipFilmCandidates(report: &report)
+            report.add("Starship film candidates: \(appendedStarshipFilmCandidates.count)")
         } catch {
             report.add("Starship film discovery failed: \(debugMessage(for: error))")
         }
+        do {
+            appendedStarshipFlightTestCandidates = try await starshipFlightTestCandidates(report: &report)
+            report.add("Starship flight test candidates: \(appendedStarshipFlightTestCandidates.count)")
+        } catch {
+            report.add("Starship flight test discovery failed: \(debugMessage(for: error))")
+        }
         candidates = candidates.sortedByPublishedDateDescending()
-        report.add("Merged candidates: \(candidates.count)")
+        let mergedCandidateCount = candidates.count + appendedStarshipFilmCandidates.count + appendedStarshipFlightTestCandidates.count
+        report.add("Merged candidates: \(mergedCandidateCount)")
 
-        guard !candidates.isEmpty else {
+        guard mergedCandidateCount > 0 else {
             throw BroadcastDiscoveryFailure(error: BroadcastDiscoveryError.noStatusesFound, report: report)
         }
 
         var selectedXItems: [DiscoveredBroadcastItem] = []
-        let xCandidates = candidates.filter { !$0.isStarshipFilm }
+        let xCandidates = candidates.filter { !$0.isAppendedSpaceXContent }
         for (index, candidate) in xCandidates.prefix(80).enumerated() {
             let statusURL = candidate.statusURL
 
@@ -126,13 +137,14 @@ struct BroadcastDiscovery {
             }
         }
 
-        let selectedStarshipItems = candidates
-            .filter(\.isStarshipFilm)
-            .sortedByPublishedDateDescending()
+        let selectedStarshipItems = (
+            appendedStarshipFilmCandidates.sortedByPublishedDateDescending()
+            + appendedStarshipFlightTestCandidates.sortedByPublishedDateDescending()
+        )
             .map { candidate in
                 DiscoveredBroadcastItem(candidate: candidate, broadcast: broadcast(from: candidate, streamURL: nil))
             }
-        report.add("Adding \(selectedStarshipItems.count) Starship films after X posts")
+        report.add("Adding \(selectedStarshipItems.count) SpaceX Starship items after X posts")
 
         let broadcasts = (
             selectedXItems
@@ -454,24 +466,10 @@ struct BroadcastDiscovery {
 
     private func recentStarshipFilmCandidates(report: inout DiscoveryReport) async throws -> [BroadcastCandidate] {
         report.add("SpaceX CMS GET: \(starshipPlaylistURL.path)")
-        var request = URLRequest(url: starshipPlaylistURL)
-        request.timeoutInterval = 15
+        let data = try await spaceXCMSData(from: starshipPlaylistURL, report: &report)
+        let playlist = try spaceXCMSDecoder().decode(SpaceXMediaPlaylist.self, from: data)
 
-        let (data, response) = try await session.data(for: request)
-        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-        report.add("SpaceX CMS HTTP \(statusCode), \(data.count) bytes")
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200 ..< 300).contains(httpResponse.statusCode) else {
-            throw BroadcastDiscoveryError.invalidResponse
-        }
-
-        let playlists = try spaceXCMSDecoder().decode([SpaceXMediaPlaylist].self, from: data)
-        let starshipMedia = playlists
-            .first { $0.link == "starship" }?
-            .media ?? []
-
-        return starshipMedia.compactMap { media in
+        return playlist.media.compactMap { media in
             guard let streamURL = media.bestStreamURL else { return nil }
             return BroadcastCandidate(
                 statusURL: streamURL,
@@ -483,9 +481,120 @@ struct BroadcastDiscovery {
                 publishedAt: media.date,
                 thumbnailURL: media.poster?.bestURL,
                 sourceKind: .hls,
-                artworkName: media.uhdStreamingLink == nil && media.uhdLink == nil ? "film" : "play.tv"
+                artworkName: media.uhdStreamingLink == nil && media.uhdLink == nil ? "film" : "play.tv",
+                isAppendedSpaceXContent: true
             )
         }
+    }
+
+    private func starshipFlightTestCandidates(report: inout DiscoveryReport) async throws -> [BroadcastCandidate] {
+        report.add("SpaceX CMS GET: \(starshipFlightTestsPlaylistURL.path)")
+        let data = try await spaceXCMSData(from: starshipFlightTestsPlaylistURL, report: &report)
+        let playlist = try spaceXCMSDecoder().decode(SpaceXMediaPlaylist.self, from: data)
+
+        let playlistCandidates: [BroadcastCandidate] = playlist.media.compactMap { media in
+            guard let streamURL = media.bestStreamURL else { return nil }
+            return BroadcastCandidate(
+                statusURL: streamURL,
+                dedupeKey: "spacex-starship-flight-test:\(media.starshipFlightTestKey ?? media.documentID ?? media.link ?? streamURL.absoluteString)",
+                streamURL: nil,
+                title: media.title,
+                subtitle: media.bestStarshipFlightTestSubtitle,
+                tweetText: media.bestDescription,
+                publishedAt: media.date,
+                thumbnailURL: media.poster?.bestURL,
+                sourceKind: .hls,
+                artworkName: "play.tv",
+                isAppendedSpaceXContent: true
+            )
+        }
+
+        let launchTileCandidates = try await starshipFlightTestLaunchTileCandidates(report: &report)
+        return deduplicatedCandidates(playlistCandidates + launchTileCandidates)
+    }
+
+    private func starshipFlightTestLaunchTileCandidates(report: inout DiscoveryReport) async throws -> [BroadcastCandidate] {
+        report.add("SpaceX CMS GET: \(launchTilesURL.path)")
+        let data = try await spaceXCMSData(from: launchTilesURL, report: &report)
+        let tiles = try JSONDecoder().decode([SpaceXStarshipLaunchTile].self, from: data)
+        let flightTestTiles = tiles
+            .filter(\.isStarshipFlightTest)
+            .sortedByPublishedDateDescending()
+
+        let missionsByLink = try await starshipMissions(for: flightTestTiles.map(\.link))
+
+        return flightTestTiles.map { tile in
+            let mission = missionsByLink[tile.link]
+            let broadcastURL = mission?.xBroadcastURL ?? tile.sourceURL
+            return BroadcastCandidate(
+                statusURL: broadcastURL,
+                dedupeKey: "spacex-starship-flight-test:\(tile.starshipFlightTestKey)",
+                streamURL: nil,
+                title: tile.displayTitle,
+                subtitle: "Starship flight test",
+                tweetText: mission?.summary ?? tile.description,
+                publishedAt: tile.publishedAt,
+                thumbnailURL: mission?.imageURL ?? tile.imageURL,
+                allowsDeferredStreamResolution: mission?.xBroadcastURL != nil,
+                sourceKind: .xBroadcast,
+                artworkName: "play.tv",
+                isAppendedSpaceXContent: true
+            )
+        }
+    }
+
+    private func starshipMissions(for links: [String]) async throws -> [String: SpaceXStarshipMission] {
+        try await withThrowingTaskGroup(of: (String, SpaceXStarshipMission?).self) { group in
+            for link in links {
+                group.addTask {
+                    let url = missionsBaseURL.appendingPathComponent(link)
+                    var request = URLRequest(url: url)
+                    request.setValue("application/json", forHTTPHeaderField: "Accept")
+                    request.setValue("Mozilla/5.0 AppleTV SpaceXTV/1.0", forHTTPHeaderField: "User-Agent")
+                    request.timeoutInterval = 15
+
+                    let data: Data
+                    let response: URLResponse
+                    do {
+                        (data, response) = try await session.data(for: request)
+                    } catch {
+                        return (link, nil)
+                    }
+                    guard let httpResponse = response as? HTTPURLResponse,
+                          (200 ..< 300).contains(httpResponse.statusCode) else {
+                        return (link, nil)
+                    }
+
+                    return (link, try? JSONDecoder().decode(SpaceXStarshipMission.self, from: data))
+                }
+            }
+
+            var missions: [String: SpaceXStarshipMission] = [:]
+            for try await (link, mission) in group {
+                if let mission {
+                    missions[link] = mission
+                }
+            }
+            return missions
+        }
+    }
+
+    private func spaceXCMSData(from url: URL, report: inout DiscoveryReport) async throws -> Data {
+        var request = URLRequest(url: url)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Mozilla/5.0 AppleTV SpaceXTV/1.0", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 15
+
+        let (data, response) = try await session.data(for: request)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        report.add("SpaceX CMS HTTP \(statusCode), \(data.count) bytes")
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200 ..< 300).contains(httpResponse.statusCode) else {
+            throw BroadcastDiscoveryError.invalidResponse
+        }
+
+        return data
     }
 
     private func spaceXCMSDecoder() -> JSONDecoder {
@@ -678,9 +787,7 @@ private struct BroadcastCandidate {
     var isPinned: Bool = false
     var sourceKind: Broadcast.SourceKind = .xBroadcast
     var artworkName: String = "antenna.radiowaves.left.and.right"
-    var isStarshipFilm: Bool {
-        sourceKind == .hls
-    }
+    var isAppendedSpaceXContent: Bool = false
 
     init(
         statusURL: URL,
@@ -695,7 +802,8 @@ private struct BroadcastCandidate {
         allowsDeferredStreamResolution: Bool = false,
         isPinned: Bool = false,
         sourceKind: Broadcast.SourceKind = .xBroadcast,
-        artworkName: String = "antenna.radiowaves.left.and.right"
+        artworkName: String = "antenna.radiowaves.left.and.right",
+        isAppendedSpaceXContent: Bool = false
     ) {
         self.statusURL = statusURL
         if let dedupeKey, !dedupeKey.isEmpty {
@@ -714,6 +822,7 @@ private struct BroadcastCandidate {
         self.isPinned = isPinned
         self.sourceKind = sourceKind
         self.artworkName = artworkName
+        self.isAppendedSpaceXContent = isAppendedSpaceXContent
     }
 }
 
@@ -1070,7 +1179,7 @@ private struct SpaceXMediaItem: Decodable {
     var poster: SpaceXMediaPoster?
 
     var bestStreamURL: URL? {
-        uhdStreamingLink ?? autoStreamingLink ?? fhdStreamingLink ?? hdStreamingLink ?? uhdLink ?? fhdLink ?? hdLink
+        autoStreamingLink ?? fhdStreamingLink ?? hdStreamingLink ?? uhdStreamingLink ?? fhdLink ?? hdLink ?? uhdLink
     }
 
     var bestSubtitle: String {
@@ -1080,10 +1189,21 @@ private struct SpaceXMediaItem: Decodable {
         return "Starship film"
     }
 
+    var bestStarshipFlightTestSubtitle: String {
+        if uhdStreamingLink != nil || uhdLink != nil {
+            return "Starship flight test · 4K"
+        }
+        return "Starship flight test"
+    }
+
     var bestDescription: String? {
         [shortDescription, description?.strippingHTMLTags()]
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first { !$0.isEmpty }
+    }
+
+    var starshipFlightTestKey: String? {
+        StarshipFlightTestKey.normalized(link: link, title: title)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -1123,6 +1243,174 @@ private struct SpaceXMediaPoster: Decodable {
     }
 }
 
+private struct SpaceXStarshipLaunchTile: Decodable {
+    var title: String
+    var shortTitle: String?
+    var link: String
+    var vehicle: String?
+    var launchSite: String?
+    var launchDate: String?
+    var launchTime: String?
+    var imageDesktop: SpaceXLaunchImage?
+
+    var displayTitle: String {
+        guard let shortTitle, !shortTitle.isEmpty else { return title }
+        return shortTitle
+    }
+
+    var description: String? {
+        [vehicle, launchSite]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+    }
+
+    var isStarshipFlightTest: Bool {
+        vehicle == "Starship" && StarshipFlightTestKey.normalized(link: link, title: title) != nil
+    }
+
+    var starshipFlightTestKey: String {
+        StarshipFlightTestKey.normalized(link: link, title: title) ?? link
+    }
+
+    var sourceURL: URL {
+        URL(string: "https://www.spacex.com/launches/\(link)") ?? URL(string: "https://www.spacex.com/launches")!
+    }
+
+    var imageURL: URL? {
+        imageDesktop?.formats?.large?.url ?? imageDesktop?.url
+    }
+
+    var publishedAt: Date? {
+        guard let launchDate else { return nil }
+        return SpaceXLaunchTileDateParser.date(from: "\(launchDate) \(launchTime ?? "00:00:00")")
+    }
+}
+
+private struct SpaceXStarshipMission: Decodable {
+    var imageDesktop: SpaceXLaunchImage?
+    var webcasts: [SpaceXWebcast]?
+    var paragraphs: [SpaceXParagraph]?
+
+    var xBroadcastURL: URL? {
+        webcasts?
+            .first { $0.streamingVideoType == "x.com" }?
+            .xBroadcastURL
+    }
+
+    var imageURL: URL? {
+        imageDesktop?.formats?.large?.url ?? imageDesktop?.url
+    }
+
+    var summary: String? {
+        paragraphs?
+            .compactMap { $0.content.strippingHTMLTags().trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+    }
+}
+
+private struct SpaceXWebcast: Decodable {
+    var videoId: String?
+    var streamingVideoType: String?
+
+    var xBroadcastURL: URL? {
+        guard let videoId, !videoId.isEmpty else { return nil }
+        return URL(string: "https://x.com/i/broadcasts/\(videoId)")
+    }
+}
+
+private struct SpaceXParagraph: Decodable {
+    var content: String
+}
+
+private struct SpaceXLaunchImage: Decodable {
+    var url: URL?
+    var formats: SpaceXLaunchImageFormats?
+}
+
+private struct SpaceXLaunchImageFormats: Decodable {
+    var large: SpaceXLaunchImageVariant?
+}
+
+private struct SpaceXLaunchImageVariant: Decodable {
+    var url: URL?
+}
+
+private enum StarshipFlightTestKey {
+    static func normalized(link: String?, title: String) -> String? {
+        let normalizedLink = link?.lowercased()
+            .replacingOccurrences(of: "starship-", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let normalizedLink, normalizedLink == "flight-test" {
+            return "flight-1"
+        }
+        if let normalizedLink,
+           normalizedLink.hasPrefix("flight-"),
+           normalizedLink.dropFirst("flight-".count).allSatisfy(\.isNumber) {
+            return normalizedLink
+        }
+        if let normalizedLink,
+           normalizedLink.hasPrefix("sn"),
+           normalizedLink.dropFirst(2).allSatisfy(\.isNumber) {
+            return normalizedLink
+        }
+        if normalizedLink == "starhopper" {
+            return "starhopper"
+        }
+
+        let lowercaseTitle = title.lowercased()
+        if lowercaseTitle.contains("starhopper") {
+            return "starhopper"
+        }
+        if let snRange = lowercaseTitle.range(of: #"sn\s*\d+"#, options: .regularExpression) {
+            return lowercaseTitle[snRange]
+                .replacingOccurrences(of: " ", with: "")
+                .replacingOccurrences(of: "\t", with: "")
+        }
+
+        let ordinals = [
+            "first": 1,
+            "second": 2,
+            "third": 3,
+            "fourth": 4,
+            "fifth": 5,
+            "sixth": 6,
+            "seventh": 7,
+            "eighth": 8,
+            "ninth": 9,
+            "tenth": 10,
+            "eleventh": 11,
+            "twelfth": 12,
+        ]
+        for (word, number) in ordinals where lowercaseTitle.contains(word) && lowercaseTitle.contains("flight test") {
+            return "flight-\(number)"
+        }
+
+        return nil
+    }
+}
+
+private extension Array where Element == SpaceXStarshipLaunchTile {
+    func sortedByPublishedDateDescending() -> [SpaceXStarshipLaunchTile] {
+        sorted { lhs, rhs in
+            switch (lhs.publishedAt, rhs.publishedAt) {
+            case let (lhsDate?, rhsDate?):
+                if lhsDate != rhsDate {
+                    return lhsDate > rhsDate
+                }
+                return lhs.displayTitle.localizedStandardCompare(rhs.displayTitle) == .orderedAscending
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            case (nil, nil):
+                return lhs.displayTitle.localizedStandardCompare(rhs.displayTitle) == .orderedAscending
+            }
+        }
+    }
+}
+
 private enum SpaceXCMSDateParser {
     private static let dayFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -1135,6 +1423,21 @@ private enum SpaceXCMSDateParser {
 
     static func date(from value: String) -> Date? {
         dayFormatter.date(from: value) ?? XAPIDateParser.date(from: value)
+    }
+}
+
+private enum SpaceXLaunchTileDateParser {
+    private static let formatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "America/Chicago")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter
+    }()
+
+    static func date(from value: String) -> Date? {
+        formatter.date(from: value)
     }
 }
 
