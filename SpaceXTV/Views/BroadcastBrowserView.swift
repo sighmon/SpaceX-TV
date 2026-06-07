@@ -69,6 +69,8 @@ struct BroadcastBrowserView: View {
                         countdown(width: contentWidth)
                             .padding(.bottom, verticalSpacing(for: screenWidth))
                         content(width: contentWidth)
+                        homeFooter(width: contentWidth)
+                            .padding(.top, footerTopSpacing(for: screenWidth))
                     }
                     .frame(width: contentWidth, alignment: .leading)
                     .padding(.horizontal, horizontalPadding)
@@ -350,6 +352,31 @@ struct BroadcastBrowserView: View {
         .frame(width: width, alignment: .leading)
     }
 
+    private func homeFooter(width: CGFloat) -> some View {
+        VStack(spacing: 18) {
+            Image("SpaceX")
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(.white.opacity(0.72))
+                .frame(width: footerLogoWidth(for: width))
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.leading, 50)
+                .opacity(0.58)
+
+            Divider()
+                .overlay(.white.opacity(0.22))
+
+            Text("ONLY THE PARANOID SURVIVE")
+                .font(.title2.weight(.bold))
+                .tracking(2.4)
+                .foregroundStyle(.white.opacity(0.58))
+                .frame(width: width, alignment: .center)
+                .padding(.top, 20)
+        }
+        .frame(width: width, alignment: .center)
+    }
+
     private func horizontalPadding(for width: CGFloat) -> CGFloat {
         if horizontalSizeClass == .compact { return 24 }
         return width < 900 ? 36 : 84
@@ -367,6 +394,10 @@ struct BroadcastBrowserView: View {
         verticalSpacing(for: width) * 0.5
     }
 
+    private func footerTopSpacing(for width: CGFloat) -> CGFloat {
+        width < 900 ? 42 : 64
+    }
+
     private func gridSpacing(for width: CGFloat) -> CGFloat {
         width < 900 ? 32 : 56
     }
@@ -377,6 +408,10 @@ struct BroadcastBrowserView: View {
 
     private func logoWidth(for width: CGFloat) -> CGFloat {
         width < 700 ? 112 : 140
+    }
+
+    private func footerLogoWidth(for width: CGFloat) -> CGFloat {
+        width < 700 ? 88 : 108
     }
 }
 
