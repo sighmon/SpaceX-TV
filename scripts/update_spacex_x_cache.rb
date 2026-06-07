@@ -6,7 +6,7 @@ require "net/http"
 require "time"
 require "uri"
 
-TOKEN = ENV.fetch("X_BEARER_TOKEN")
+TOKEN = ENV["X_BEARER_TOKEN"]
 OUTPUT_PATH = File.expand_path(
   ENV.fetch("SPACEX_TV_X_CACHE_PATH", "~/www.sighmon.com/spacex-tv/x-cache.json")
 )
@@ -18,6 +18,8 @@ COMMON_POST_QUERY = [
 ].join("&")
 
 def get_json(url)
+  raise "X_BEARER_TOKEN is not set" if TOKEN.nil? || TOKEN.empty?
+
   uri = URI(url)
   request = Net::HTTP::Get.new(uri)
   request["Authorization"] = "Bearer #{TOKEN}"
@@ -32,29 +34,40 @@ def get_json(url)
   end
 end
 
-user = get_json("https://api.x.com/2/users/by/username/spacex?user.fields=pinned_tweet_id")
-user_id = user.fetch("data").fetch("id")
-pinned_tweet_id = user.fetch("data")["pinned_tweet_id"]
-
-timeline = get_json(
-  "https://api.x.com/2/users/#{user_id}/tweets?max_results=25&#{COMMON_POST_QUERY}&exclude=retweets,replies"
-)
-
-pinned = if pinned_tweet_id && !pinned_tweet_id.empty?
-  get_json("https://api.x.com/2/tweets?ids=#{pinned_tweet_id}&#{COMMON_POST_QUERY}")
+def log(message)
+  puts "[#{Time.now.utc.iso8601}] #{message}"
 end
 
-payload = {
-  generated_at: Time.now.utc.iso8601,
-  source: "x-api-cache-v1",
-  user: user,
-  pinned: pinned,
-  timeline: timeline
-}
+begin
+  log "Starting SpaceX TV X cache update"
 
-FileUtils.mkdir_p(File.dirname(OUTPUT_PATH))
-temporary_path = "#{OUTPUT_PATH}.tmp"
-File.write(temporary_path, JSON.pretty_generate(payload))
-File.rename(temporary_path, OUTPUT_PATH)
+  user = get_json("https://api.x.com/2/users/by/username/spacex?user.fields=pinned_tweet_id")
+  user_id = user.fetch("data").fetch("id")
+  pinned_tweet_id = user.fetch("data")["pinned_tweet_id"]
 
-puts "Wrote #{OUTPUT_PATH}"
+  timeline = get_json(
+    "https://api.x.com/2/users/#{user_id}/tweets?max_results=25&#{COMMON_POST_QUERY}&exclude=retweets,replies"
+  )
+
+  pinned = if pinned_tweet_id && !pinned_tweet_id.empty?
+    get_json("https://api.x.com/2/tweets?ids=#{pinned_tweet_id}&#{COMMON_POST_QUERY}")
+  end
+
+  payload = {
+    generated_at: Time.now.utc.iso8601,
+    source: "x-api-cache-v1",
+    user: user,
+    pinned: pinned,
+    timeline: timeline
+  }
+
+  FileUtils.mkdir_p(File.dirname(OUTPUT_PATH))
+  temporary_path = "#{OUTPUT_PATH}.tmp"
+  File.write(temporary_path, JSON.pretty_generate(payload))
+  File.rename(temporary_path, OUTPUT_PATH)
+
+  log "Wrote #{OUTPUT_PATH}"
+rescue StandardError => error
+  log "Failed SpaceX TV X cache update: #{error.class}: #{error.message}"
+  raise
+end

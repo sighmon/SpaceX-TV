@@ -52,24 +52,39 @@ For simulator testing, the easiest token entry path is usually paste through the
 
 The fallback cache is intended for shared hosting where Ruby and cron are available without extra packages. The script reads the X API Bearer Token from `X_BEARER_TOKEN` and writes JSON to `~/www.sighmon.com/spacex-tv/x-cache.json`.
 
-Install the script somewhere outside the web root, for example:
+Install the scripts somewhere outside the web root, for example:
 
 ```sh
 mkdir -p ~/scripts
 cp scripts/update_spacex_x_cache.rb ~/scripts/update_spacex_x_cache.rb
-chmod 700 ~/scripts/update_spacex_x_cache.rb
+cp scripts/run_spacex_cache_update.sh ~/scripts/run_spacex_cache_update.sh
+chmod 700 ~/scripts/update_spacex_x_cache.rb ~/scripts/run_spacex_cache_update.sh
 ```
+
+Edit `~/scripts/run_spacex_cache_update.sh` on the server and replace `YOUR_X_API_BEARER_TOKEN` and `YOUR_WEBHOST_USER`.
 
 Full crontab example for once a day at 6:00am Adelaide time:
 
 ```cron
 CRON_TZ=Australia/Adelaide
-X_BEARER_TOKEN=YOUR_X_API_BEARER_TOKEN
-SPACEX_TV_X_CACHE_PATH=/home/YOUR_DREAMHOST_USER/www.sighmon.com/spacex-tv/x-cache.json
-0 6 * * * /usr/bin/ruby /home/YOUR_DREAMHOST_USER/scripts/update_spacex_x_cache.rb >> /home/YOUR_DREAMHOST_USER/spacex-tv-x-cache.log 2>&1
+0 6 * * * /home/YOUR_WEBHOST_USER/scripts/run_spacex_cache_update.sh >> /home/YOUR_WEBHOST_USER/spacex-tv-x-cache.log 2>&1
 ```
 
 If your DreamHost cron editor does not honor `CRON_TZ`, set the panel schedule to the equivalent server-local time and keep the command itself unchanged.
+
+The script logs timestamped start, success, and failure lines. To test the hosted copy over SSH:
+
+```sh
+/home/YOUR_WEBHOST_USER/scripts/run_spacex_cache_update.sh >> /home/YOUR_WEBHOST_USER/spacex-tv-x-cache.log 2>&1
+tail -n 40 /home/YOUR_WEBHOST_USER/spacex-tv-x-cache.log
+ls -l /home/YOUR_WEBHOST_USER/www.sighmon.com/spacex-tv/x-cache.json
+```
+
+DreamHost cron commands that use `setlock` should redirect after the `setlock` command, so lock failures or missing-command errors are captured too:
+
+```cron
+@daily /usr/bin/setlock -n /tmp/cronlock.YOUR_LOCK_ID /home/YOUR_WEBHOST_USER/scripts/run_spacex_cache_update.sh >> /home/YOUR_WEBHOST_USER/spacex-tv-x-cache.log 2>&1
+```
 
 ## Build
 
