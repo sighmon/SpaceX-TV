@@ -35,7 +35,7 @@ final class PlayerViewModel: ObservableObject {
             let resolved = try await BroadcastResolver().resolve(broadcast)
             debugLines.append("Resolved stream: \(resolved.streamURL.absoluteString)")
             await preflight(resolved.streamURL)
-            state = .ready(resolved.streamURL, resolved.title ?? broadcast.title, playbackGeneration, nil)
+            state = .ready(resolved.streamURL, videoPlayerTitle(resolved.title ?? broadcast.title), playbackGeneration, nil)
         } catch {
             let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             debugLines.append("Resolve failed: \(message)")
@@ -60,7 +60,7 @@ final class PlayerViewModel: ObservableObject {
             playbackGeneration += 1
             debugLines.append("MP4 playback failed; falling back to HLS: \(fallbackURL.absoluteString)")
             await preflight(fallbackURL)
-            state = .ready(fallbackURL, currentTitle ?? broadcast.title, playbackGeneration, resumePosition)
+            state = .ready(fallbackURL, videoPlayerTitle(currentTitle ?? broadcast.title), playbackGeneration, resumePosition)
             return
         }
 
@@ -80,7 +80,7 @@ final class PlayerViewModel: ObservableObject {
             playbackGeneration += 1
             debugLines.append("Refreshed stream: \(resolved.streamURL.absoluteString)")
             await preflight(resolved.streamURL)
-            state = .ready(resolved.streamURL, resolved.title ?? broadcast.title, playbackGeneration, resumePosition)
+            state = .ready(resolved.streamURL, videoPlayerTitle(resolved.title ?? broadcast.title), playbackGeneration, resumePosition)
         } catch {
             let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             debugLines.append("Stream refresh failed: \(message)")
@@ -138,6 +138,18 @@ final class PlayerViewModel: ObservableObject {
         return "\(Int(seconds))s"
     }
 
+    private func videoPlayerTitle(_ title: String) -> String {
+        let withoutLinks = title.replacingOccurrences(
+            of: #"(?i)\b(?:https?://|www\.)\S+"#,
+            with: "",
+            options: .regularExpression
+        )
+        let cleaned = withoutLinks
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters))
+        return cleaned.isEmpty ? "SpaceX Broadcast" : cleaned
+    }
+
     private func spaceXHLSFallbackURL(for streamURL: URL) -> URL? {
         guard streamURL.pathExtension.lowercased() == "mp4",
               streamURL.host?.lowercased().contains("content.spacex.com") == true else {
@@ -180,11 +192,9 @@ struct PlayerScreen: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var library: BroadcastLibrary
     @StateObject private var model: PlayerViewModel
-    @State private var showsCompletionOverlay = false
     @State private var showsPlaybackBackButton = false
     @State private var isPlaybackPaused = false
     @State private var backButtonHideTask: Task<Void, Never>?
-    @State private var replayRequest = 0
 
     init(broadcast: Broadcast) {
         _model = StateObject(wrappedValue: PlayerViewModel(broadcast: broadcast))
@@ -206,7 +216,6 @@ struct PlayerScreen: View {
                         title: title,
                         playbackGeneration: playbackGeneration,
                         resumePosition: resumePosition,
-                        replayRequest: replayRequest,
                         onTapped: {
                             showPlaybackBackButton()
                         },
@@ -219,7 +228,7 @@ struct PlayerScreen: View {
                             }
                         },
                         onEnded: {
-                            showsCompletionOverlay = true
+                            dismiss()
                         },
                         onPlaybackFailure: { resumePosition in
                             Task {
@@ -268,19 +277,6 @@ struct PlayerScreen: View {
 #endif
         .animation(.easeOut(duration: 0.18), value: showsPlaybackBackButton)
         .animation(.easeOut(duration: 0.18), value: isPlaybackPaused)
-        .fullScreenCover(isPresented: $showsCompletionOverlay) {
-            PlaybackCompleteOverlay(
-                onReplay: {
-                    showsCompletionOverlay = false
-                    replayRequest += 1
-                },
-                onBack: {
-                    showsCompletionOverlay = false
-                    dismiss()
-                }
-            )
-            .preferredColorScheme(.dark)
-        }
         .onDisappear {
             backButtonHideTask?.cancel()
         }
@@ -343,7 +339,6 @@ struct TVPlayerView: UIViewControllerRepresentable {
     var title: String
     var playbackGeneration: Int
     var resumePosition: Double?
-    var replayRequest: Int
     var onTapped: () -> Void
     var onPlaybackPausedChanged: (Bool) -> Void
     var onEnded: () -> Void
@@ -375,13 +370,6 @@ struct TVPlayerView: UIViewControllerRepresentable {
         host.onFullScreenDismissed = onFullScreenDismissed
         context.coordinator.updatePlaybackTitle(title, item: controller.player?.currentItem)
         let currentURL = (controller.player?.currentItem?.asset as? AVURLAsset)?.url
-        if context.coordinator.lastReplayRequest != replayRequest {
-            context.coordinator.lastReplayRequest = replayRequest
-            controller.player?.seek(to: .zero)
-            controller.player?.play()
-            onDebug("Replay requested")
-            return
-        }
 
         guard currentURL != streamURL || context.coordinator.lastPlaybackGeneration != playbackGeneration else { return }
 
@@ -473,7 +461,6 @@ struct TVPlayerView: UIViewControllerRepresentable {
     }
 
     final class Coordinator: NSObject {
-        var lastReplayRequest = 0
         var lastPlaybackGeneration = 0
         var onTapped: () -> Void
         var onPlaybackPausedChanged: (Bool) -> Void
@@ -711,51 +698,6 @@ struct TVPlayerView: UIViewControllerRepresentable {
                 return "360p"
             }
             return nil
-        }
-    }
-}
-
-private struct PlaybackCompleteOverlay: View {
-    private enum FocusTarget {
-        case replay
-        case back
-    }
-
-    var onReplay: () -> Void
-    var onBack: () -> Void
-    @FocusState private var focusedTarget: FocusTarget?
-
-    var body: some View {
-        ZStack {
-            Color.black.opacity(0.82)
-                .ignoresSafeArea()
-
-            HStack(spacing: 28) {
-                Button(action: onBack) {
-                    Label("Back", systemImage: "chevron.backward")
-                        .font(.title2.weight(.semibold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .frame(width: 260, height: 88)
-                }
-                .buttonStyle(.borderedProminent)
-                .focused($focusedTarget, equals: .back)
-
-                Button(action: onReplay) {
-                    Label("Replay", systemImage: "arrow.counterclockwise")
-                        .font(.title2.weight(.semibold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .frame(width: 260, height: 88)
-                }
-                .buttonStyle(.bordered)
-                .focused($focusedTarget, equals: .replay)
-            }
-            .padding(30)
-            .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8))
-        }
-        .onAppear {
-            focusedTarget = .back
         }
     }
 }
