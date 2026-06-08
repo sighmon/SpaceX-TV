@@ -199,10 +199,11 @@ struct PlayerScreen: View {
                     .task {
                         await model.start()
                     }
-            case .ready(let url, _, let playbackGeneration, let resumePosition):
+            case .ready(let url, let title, let playbackGeneration, let resumePosition):
                 ZStack(alignment: .bottomLeading) {
                     TVPlayerView(
                         streamURL: url,
+                        title: title,
                         playbackGeneration: playbackGeneration,
                         resumePosition: resumePosition,
                         replayRequest: replayRequest,
@@ -336,6 +337,7 @@ struct PlayerScreen: View {
 
 struct TVPlayerView: UIViewControllerRepresentable {
     var streamURL: URL
+    var title: String
     var playbackGeneration: Int
     var resumePosition: Double?
     var replayRequest: Int
@@ -348,7 +350,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
         context.coordinator.lastPlaybackGeneration = playbackGeneration
-        controller.player = context.coordinator.makePlayer(for: streamURL)
+        controller.player = context.coordinator.makePlayer(for: streamURL, title: title)
         controller.showsPlaybackControls = true
         controller.videoGravity = .resizeAspect
         context.coordinator.installTapRecognizer(on: controller.view)
@@ -360,6 +362,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
         context.coordinator.onTapped = onTapped
         context.coordinator.onPlaybackPausedChanged = onPlaybackPausedChanged
         context.coordinator.onPlaybackFailure = onPlaybackFailure
+        context.coordinator.updatePlaybackTitle(title, item: controller.player?.currentItem)
         let currentURL = (controller.player?.currentItem?.asset as? AVURLAsset)?.url
         if context.coordinator.lastReplayRequest != replayRequest {
             context.coordinator.lastReplayRequest = replayRequest
@@ -373,7 +376,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
 
         context.coordinator.lastPlaybackGeneration = playbackGeneration
         let oldPlayer = controller.player
-        let player = context.coordinator.makePlayer(for: streamURL)
+        let player = context.coordinator.makePlayer(for: streamURL, title: title)
         controller.player = player
         context.coordinator.stop(oldPlayer)
         if let resumePosition, resumePosition.isFinite, resumePosition > 0 {
@@ -394,6 +397,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
+            playbackTitle: title,
             onTapped: onTapped,
             onPlaybackPausedChanged: onPlaybackPausedChanged,
             onEnded: onEnded,
@@ -408,6 +412,8 @@ struct TVPlayerView: UIViewControllerRepresentable {
         var onTapped: () -> Void
         var onPlaybackPausedChanged: (Bool) -> Void
         var onPlaybackFailure: (Double?) -> Void
+        private var playbackTitle: String
+        private var displayedResolution: String?
         private let onEnded: () -> Void
         private let onDebug: (String) -> Void
         private var statusObservation: NSKeyValueObservation?
@@ -418,12 +424,14 @@ struct TVPlayerView: UIViewControllerRepresentable {
         private weak var tapRecognizer: UITapGestureRecognizer?
 
         init(
+            playbackTitle: String,
             onTapped: @escaping () -> Void,
             onPlaybackPausedChanged: @escaping (Bool) -> Void,
             onEnded: @escaping () -> Void,
             onPlaybackFailure: @escaping (Double?) -> Void,
             onDebug: @escaping (String) -> Void
         ) {
+            self.playbackTitle = playbackTitle
             self.onTapped = onTapped
             self.onPlaybackPausedChanged = onPlaybackPausedChanged
             self.onEnded = onEnded
@@ -457,8 +465,10 @@ struct TVPlayerView: UIViewControllerRepresentable {
             onTapped()
         }
 
-        func makePlayer(for streamURL: URL) -> AVPlayer {
+        func makePlayer(for streamURL: URL, title: String) -> AVPlayer {
             onDebug("Creating player for: \(streamURL.absoluteString)")
+            playbackTitle = title
+            displayedResolution = initialResolutionDescription(for: streamURL)
             let headers = [
                 "User-Agent": "Mozilla/5.0 AppleTV SpaceXTV/1.0",
                 "Referer": referer(for: streamURL),
@@ -473,6 +483,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
             if #available(tvOS 11.0, iOS 11.0, *) {
                 item.preferredMaximumResolution = CGSize(width: 3840, height: 2160)
             }
+            applyExternalMetadata(to: item)
             onDebug("Player preferences: peakBitRate \(Int(item.preferredPeakBitRate)), forwardBuffer \(Int(item.preferredForwardBufferDuration))s, maxResolution \(Int(item.preferredMaximumResolution.width))x\(Int(item.preferredMaximumResolution.height))")
             observe(item)
             let player = AVPlayer(playerItem: item)
@@ -484,6 +495,14 @@ struct TVPlayerView: UIViewControllerRepresentable {
         func stop(_ player: AVPlayer?) {
             player?.pause()
             player?.replaceCurrentItem(with: nil)
+        }
+
+        func updatePlaybackTitle(_ title: String, item: AVPlayerItem?) {
+            guard playbackTitle != title else { return }
+            playbackTitle = title
+            if let item {
+                applyExternalMetadata(to: item)
+            }
         }
 
         private func referer(for streamURL: URL) -> String {
@@ -532,6 +551,9 @@ struct TVPlayerView: UIViewControllerRepresentable {
                 queue: .main
             ) { [weak self, weak item] _ in
                 guard let event = item?.accessLog()?.events.last else { return }
+                if let item, let resolution = self?.resolutionDescription(from: event.uri) {
+                    self?.updateDisplayedResolution(resolution, item: item)
+                }
                 self?.onDebug(
                     "Access log update: indicated \(Int(event.indicatedBitrate)), observed \(Int(event.observedBitrate)), requests \(event.numberOfMediaRequests), bytes \(event.numberOfBytesTransferred), uri \(event.uri ?? "unknown")"
                 )
@@ -545,6 +567,9 @@ struct TVPlayerView: UIViewControllerRepresentable {
                     case .readyToPlay:
                         self?.onDebug("AVPlayerItem status: ready")
                         if let event = item.accessLog()?.events.last {
+                            if let resolution = self?.resolutionDescription(from: event.uri) {
+                                self?.updateDisplayedResolution(resolution, item: item)
+                            }
                             self?.onDebug("Access log: bitrate \(Int(event.indicatedBitrate)), segments \(event.numberOfMediaRequests)")
                         }
                     case .failed:
@@ -561,6 +586,65 @@ struct TVPlayerView: UIViewControllerRepresentable {
                     }
                 }
             }
+        }
+
+        private func applyExternalMetadata(to item: AVPlayerItem) {
+            var metadata: [AVMetadataItem] = [
+                metadataItem(
+                    identifier: .commonIdentifierTitle,
+                    value: playbackTitle
+                )
+            ]
+
+            if let displayedResolution {
+                metadata.append(
+                    metadataItem(
+                        identifier: .iTunesMetadataTrackSubTitle,
+                        value: displayedResolution
+                    )
+                )
+            }
+
+            item.externalMetadata = metadata
+        }
+
+        private func metadataItem(identifier: AVMetadataIdentifier, value: String) -> AVMetadataItem {
+            let item = AVMutableMetadataItem()
+            item.identifier = identifier
+            item.value = value as NSString
+            item.extendedLanguageTag = "und"
+            return item.copy() as! AVMetadataItem
+        }
+
+        private func updateDisplayedResolution(_ resolution: String, item: AVPlayerItem) {
+            guard displayedResolution != resolution else { return }
+            displayedResolution = resolution
+            applyExternalMetadata(to: item)
+            onDebug("Updated native player resolution: \(resolution)")
+        }
+
+        private func initialResolutionDescription(for streamURL: URL) -> String {
+            resolutionDescription(from: streamURL.absoluteString) ?? "Auto up to 4K"
+        }
+
+        private func resolutionDescription(from uri: String?) -> String? {
+            guard let uri = uri?.lowercased() else { return nil }
+            if uri.contains("2160") || uri.contains("4k") || uri.contains("uhd") {
+                return "4K"
+            }
+            if uri.contains("1080") {
+                return "1080p"
+            }
+            if uri.contains("720") {
+                return "720p"
+            }
+            if uri.contains("480") {
+                return "480p"
+            }
+            if uri.contains("360") {
+                return "360p"
+            }
+            return nil
         }
     }
 }

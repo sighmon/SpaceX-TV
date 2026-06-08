@@ -88,7 +88,7 @@ final class BroadcastLibrary: ObservableObject {
         self.usesXAPIBearerToken = defaults.bool(forKey: Keys.usesXAPIBearerToken)
         self.showsPlayerDebugOverlay = defaults.bool(forKey: Keys.showsPlayerDebugOverlay)
         self.showsNextLaunchCountdown = defaults.object(forKey: Keys.showsNextLaunchCountdown) as? Bool ?? true
-        self.prefersMP4Playback = defaults.object(forKey: Keys.prefersMP4Playback) as? Bool ?? true
+        self.prefersMP4Playback = defaults.object(forKey: Keys.prefersMP4Playback) as? Bool ?? false
     }
 
 #if DEBUG
@@ -110,7 +110,7 @@ final class BroadcastLibrary: ObservableObject {
         self.usesXAPIBearerToken = false
         self.showsPlayerDebugOverlay = false
         self.showsNextLaunchCountdown = true
-        self.prefersMP4Playback = true
+        self.prefersMP4Playback = false
         self.loadingState = .loaded
     }
 #endif
