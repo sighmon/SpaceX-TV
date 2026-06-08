@@ -1216,14 +1216,14 @@ private struct SpaceXMediaItem: Decodable {
 
     func bestStreamURL(prefersMP4Playback: Bool) -> URL? {
         if prefersMP4Playback {
-            return fhdLink ?? hdLink ?? uhdLink ?? autoStreamingLink ?? fhdStreamingLink ?? hdStreamingLink ?? uhdStreamingLink
+            return uhdLink ?? fhdLink ?? hdLink ?? autoStreamingLink ?? uhdStreamingLink ?? fhdStreamingLink ?? hdStreamingLink
         }
         return bestStreamURL
     }
 
     func bestStarshipFlightTestURL(prefersMP4Playback: Bool) -> URL? {
         if prefersMP4Playback {
-            return fhdLink ?? hdLink ?? autoStreamingLink ?? fhdStreamingLink ?? hdStreamingLink ?? uhdLink ?? uhdStreamingLink
+            return uhdLink ?? fhdLink ?? hdLink ?? autoStreamingLink ?? uhdStreamingLink ?? fhdStreamingLink ?? hdStreamingLink
         }
         return bestStreamURL
     }

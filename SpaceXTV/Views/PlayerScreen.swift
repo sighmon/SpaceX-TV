@@ -145,7 +145,7 @@ final class PlayerViewModel: ObservableObject {
         }
 
         let filename = streamURL.deletingPathExtension().lastPathComponent
-        let suffixes = ["_1080P", "_720P", "_4K"]
+        let suffixes = ["_4K", "_1080P", "_720P"]
         guard let suffix = suffixes.first(where: { filename.hasSuffix($0) }) else {
             return nil
         }
