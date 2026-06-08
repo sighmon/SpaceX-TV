@@ -24,6 +24,7 @@ struct Broadcast: Identifiable, Hashable, Codable {
     var galleryImages: [GalleryImage]
     var artworkName: String
     var isPinned: Bool
+    var isLive: Bool?
 
     init(
         id: UUID = UUID(),
@@ -38,7 +39,8 @@ struct Broadcast: Identifiable, Hashable, Codable {
         thumbnailURL: URL? = nil,
         galleryImages: [GalleryImage] = [],
         artworkName: String,
-        isPinned: Bool = false
+        isPinned: Bool = false,
+        isLive: Bool? = nil
     ) {
         self.id = id
         self.title = title
@@ -53,6 +55,7 @@ struct Broadcast: Identifiable, Hashable, Codable {
         self.galleryImages = galleryImages
         self.artworkName = artworkName
         self.isPinned = isPinned
+        self.isLive = isLive
     }
 
     enum CodingKeys: String, CodingKey {
@@ -69,6 +72,7 @@ struct Broadcast: Identifiable, Hashable, Codable {
         case galleryImages
         case artworkName
         case isPinned
+        case isLive
     }
 
     init(from decoder: Decoder) throws {
@@ -86,6 +90,7 @@ struct Broadcast: Identifiable, Hashable, Codable {
         galleryImages = try container.decodeIfPresent([GalleryImage].self, forKey: .galleryImages) ?? []
         artworkName = try container.decode(String.self, forKey: .artworkName)
         isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        isLive = try container.decodeIfPresent(Bool.self, forKey: .isLive)
     }
 }
 

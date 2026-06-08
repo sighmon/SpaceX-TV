@@ -689,10 +689,8 @@ private struct BroadcastCard: View {
                     .frame(maxWidth: .infinity, alignment: .bottomLeading)
             }
             .overlay(alignment: .topTrailing) {
-                TimelineView(.periodic(from: .now, by: 30)) { context in
-                    cardBadges(now: context.date)
-                        .padding(14)
-                }
+                cardBadges
+                    .padding(14)
             }
             .frame(maxWidth: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -742,9 +740,9 @@ private struct BroadcastCard: View {
     }
 
     @ViewBuilder
-    private func cardBadges(now: Date) -> some View {
+    private var cardBadges: some View {
         HStack(spacing: 8) {
-            if isLive(now: now) {
+            if broadcast.isLive == true {
                 Text("LIVE")
                     .font(.caption2.weight(.black))
                     .foregroundStyle(.white)
@@ -780,14 +778,8 @@ private struct BroadcastCard: View {
             Text("\(broadcast.galleryImages.count) photos")
                 .lineLimit(1)
                 .font(.caption2.weight(.medium))
-                .foregroundStyle(.gray.opacity(0.6))
+            .foregroundStyle(.gray.opacity(0.6))
         }
-    }
-
-    private func isLive(now: Date) -> Bool {
-        guard let publishedAt = broadcast.publishedAt else { return false }
-        let elapsed = now.timeIntervalSince(publishedAt)
-        return elapsed >= 0 && elapsed <= 10 * 60
     }
 
     @ViewBuilder
@@ -971,7 +963,8 @@ private extension Broadcast {
             tweetText: "Watch Starship's next integrated flight test live from Starbase.",
             publishedAt: Date().addingTimeInterval(-3 * 60),
             artworkName: "SpaceX",
-            isPinned: true
+            isPinned: true,
+            isLive: true
         ),
         Broadcast(
             id: UUID(uuidString: "7A2799E0-B06F-4D9B-A450-B76093C978E0")!,

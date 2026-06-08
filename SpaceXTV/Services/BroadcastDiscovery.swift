@@ -126,14 +126,17 @@ struct BroadcastDiscovery {
             do {
                 let streamURL: URL
                 let resolvedThumbnailURL: URL?
+                let isLive: Bool?
                 if let apiStreamURL = candidate.streamURL {
                     streamURL = apiStreamURL
                     resolvedThumbnailURL = nil
+                    isLive = nil
                     report.add("Using X API media variant for \(statusURL.lastPathComponent)")
                 } else {
                     let resolved = try await resolver.resolveStatusURL(statusURL)
                     streamURL = resolved.streamURL
                     resolvedThumbnailURL = resolved.thumbnailURL
+                    isLive = resolved.isLive
                     report.add("Found page stream for \(statusURL.lastPathComponent)")
                     report.add("Page thumbnail for \(statusURL.lastPathComponent): \(resolvedThumbnailURL == nil ? "missing" : "present")")
                 }
@@ -144,7 +147,8 @@ struct BroadcastDiscovery {
                     broadcast: broadcast(
                         from: candidate,
                         streamURL: streamURL,
-                        thumbnailURL: candidate.thumbnailURL ?? resolvedThumbnailURL
+                        thumbnailURL: candidate.thumbnailURL ?? resolvedThumbnailURL,
+                        isLive: isLive
                     )
                 ))
             } catch {
@@ -182,7 +186,7 @@ struct BroadcastDiscovery {
         return BroadcastDiscoveryResult(broadcasts: broadcasts, report: report)
     }
 
-    private func broadcast(from candidate: BroadcastCandidate, streamURL: URL?, thumbnailURL: URL? = nil) -> Broadcast {
+    private func broadcast(from candidate: BroadcastCandidate, streamURL: URL?, thumbnailURL: URL? = nil, isLive: Bool? = nil) -> Broadcast {
         Broadcast(
             title: candidate.title,
             subtitle: candidate.subtitle,
@@ -193,7 +197,8 @@ struct BroadcastDiscovery {
             publishedAt: candidate.publishedAt,
             thumbnailURL: thumbnailURL ?? candidate.thumbnailURL,
             artworkName: candidate.artworkName,
-            isPinned: candidate.isPinned
+            isPinned: candidate.isPinned,
+            isLive: isLive
         )
     }
 

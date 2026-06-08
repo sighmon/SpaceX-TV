@@ -67,11 +67,12 @@ struct BroadcastResolver {
         case .xBroadcast:
             if let streamURL = broadcast.streamURL {
                 return ResolvedBroadcast(
-                    title: broadcast.title,
-                    streamURL: try await highestQualityStreamURL(from: streamURL),
-                    thumbnailURL: broadcast.thumbnailURL
-                )
-            }
+                title: broadcast.title,
+                streamURL: try await highestQualityStreamURL(from: streamURL),
+                thumbnailURL: broadcast.thumbnailURL,
+                isLive: broadcast.isLive
+            )
+        }
 
             let resolved = try await resolveStatusURL(broadcast.sourceURL)
             return ResolvedBroadcast(
