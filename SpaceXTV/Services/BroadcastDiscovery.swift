@@ -192,7 +192,8 @@ struct BroadcastDiscovery {
             tweetText: candidate.tweetText,
             publishedAt: candidate.publishedAt,
             thumbnailURL: thumbnailURL ?? candidate.thumbnailURL,
-            artworkName: candidate.artworkName
+            artworkName: candidate.artworkName,
+            isPinned: candidate.isPinned
         )
     }
 
@@ -207,7 +208,8 @@ struct BroadcastDiscovery {
             publishedAt: candidate.publishedAt,
             thumbnailURL: candidate.thumbnailURL ?? candidate.galleryImages.first?.url,
             galleryImages: candidate.galleryImages,
-            artworkName: "photo.on.rectangle"
+            artworkName: "photo.on.rectangle",
+            isPinned: candidate.isPinned
         )
     }
 

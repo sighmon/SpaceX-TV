@@ -23,6 +23,7 @@ struct Broadcast: Identifiable, Hashable, Codable {
     var thumbnailURL: URL?
     var galleryImages: [GalleryImage]
     var artworkName: String
+    var isPinned: Bool
 
     init(
         id: UUID = UUID(),
@@ -36,7 +37,8 @@ struct Broadcast: Identifiable, Hashable, Codable {
         publishedAt: Date? = nil,
         thumbnailURL: URL? = nil,
         galleryImages: [GalleryImage] = [],
-        artworkName: String
+        artworkName: String,
+        isPinned: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -50,6 +52,40 @@ struct Broadcast: Identifiable, Hashable, Codable {
         self.thumbnailURL = thumbnailURL
         self.galleryImages = galleryImages
         self.artworkName = artworkName
+        self.isPinned = isPinned
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case subtitle
+        case sourceURL
+        case sourceKind
+        case contentKind
+        case streamURL
+        case tweetText
+        case publishedAt
+        case thumbnailURL
+        case galleryImages
+        case artworkName
+        case isPinned
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        subtitle = try container.decode(String.self, forKey: .subtitle)
+        sourceURL = try container.decode(URL.self, forKey: .sourceURL)
+        sourceKind = try container.decode(SourceKind.self, forKey: .sourceKind)
+        contentKind = try container.decodeIfPresent(ContentKind.self, forKey: .contentKind) ?? .video
+        streamURL = try container.decodeIfPresent(URL.self, forKey: .streamURL)
+        tweetText = try container.decodeIfPresent(String.self, forKey: .tweetText)
+        publishedAt = try container.decodeIfPresent(Date.self, forKey: .publishedAt)
+        thumbnailURL = try container.decodeIfPresent(URL.self, forKey: .thumbnailURL)
+        galleryImages = try container.decodeIfPresent([GalleryImage].self, forKey: .galleryImages) ?? []
+        artworkName = try container.decode(String.self, forKey: .artworkName)
+        isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
     }
 }
 

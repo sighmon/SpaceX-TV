@@ -688,6 +688,12 @@ private struct BroadcastCard: View {
                     .padding(.bottom, 24)
                     .frame(maxWidth: .infinity, alignment: .bottomLeading)
             }
+            .overlay(alignment: .topTrailing) {
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    cardBadges(now: context.date)
+                        .padding(14)
+                }
+            }
             .frame(maxWidth: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .background(.white.opacity(isFocused ? 0.20 : 0.08), in: RoundedRectangle(cornerRadius: 8))
@@ -736,6 +742,29 @@ private struct BroadcastCard: View {
     }
 
     @ViewBuilder
+    private func cardBadges(now: Date) -> some View {
+        HStack(spacing: 8) {
+            if isLive(now: now) {
+                Text("LIVE")
+                    .font(.caption2.weight(.black))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Color.red, in: Capsule())
+            }
+
+            if broadcast.sourceKind == .xBroadcast && broadcast.isPinned {
+                Image(systemName: "pin.fill")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 26, height: 26)
+                    .background(.black.opacity(0.56), in: Circle())
+                    .accessibilityLabel("Pinned X post")
+            }
+        }
+    }
+
+    @ViewBuilder
     private var metadata: some View {
         if let publishedAt = broadcast.publishedAt {
             HStack(spacing: 10) {
@@ -753,6 +782,12 @@ private struct BroadcastCard: View {
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(.gray.opacity(0.6))
         }
+    }
+
+    private func isLive(now: Date) -> Bool {
+        guard let publishedAt = broadcast.publishedAt else { return false }
+        let elapsed = now.timeIntervalSince(publishedAt)
+        return elapsed >= 0 && elapsed <= 10 * 60
     }
 
     @ViewBuilder
