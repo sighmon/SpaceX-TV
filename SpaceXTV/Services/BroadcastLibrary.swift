@@ -38,6 +38,12 @@ final class BroadcastLibrary: ObservableObject {
             defaults.set(showsNextLaunchCountdown, forKey: Keys.showsNextLaunchCountdown)
         }
     }
+    @Published var prefersMP4Playback: Bool {
+        didSet {
+            defaults.set(prefersMP4Playback, forKey: Keys.prefersMP4Playback)
+            defaults.removeObject(forKey: Keys.dailyCache)
+        }
+    }
 
     private let discovery: BroadcastDiscovery
     private let defaults: UserDefaults
@@ -45,7 +51,7 @@ final class BroadcastLibrary: ObservableObject {
     private let calendar: Calendar
     private let pageSize = 10
     private let maximumRequestedLimit = 20
-    private let cacheVersion = 21
+    private let cacheVersion = 24
     private let xAPICacheURL = URL(string: "https://www.sighmon.com/spacex-tv/x-cache.json")!
     private var cachedBroadcasts: [Broadcast] = []
     private var requestedLimit = 0
@@ -82,6 +88,7 @@ final class BroadcastLibrary: ObservableObject {
         self.usesXAPIBearerToken = defaults.bool(forKey: Keys.usesXAPIBearerToken)
         self.showsPlayerDebugOverlay = defaults.bool(forKey: Keys.showsPlayerDebugOverlay)
         self.showsNextLaunchCountdown = defaults.object(forKey: Keys.showsNextLaunchCountdown) as? Bool ?? true
+        self.prefersMP4Playback = defaults.object(forKey: Keys.prefersMP4Playback) as? Bool ?? false
     }
 
 #if DEBUG
@@ -103,6 +110,7 @@ final class BroadcastLibrary: ObservableObject {
         self.usesXAPIBearerToken = false
         self.showsPlayerDebugOverlay = false
         self.showsNextLaunchCountdown = true
+        self.prefersMP4Playback = false
         self.loadingState = .loaded
     }
 #endif
@@ -193,13 +201,15 @@ final class BroadcastLibrary: ObservableObject {
         if usesXAPIBearerToken, !token.isEmpty {
             return try await discovery.discoverRecentSpaceXBroadcasts(
                 limit: limit,
-                xAPIBearerToken: token
+                xAPIBearerToken: token,
+                prefersMP4Playback: prefersMP4Playback
             )
         }
 
         return try await discovery.discoverRecentSpaceXBroadcasts(
             limit: limit,
-            xAPICacheURL: xAPICacheURL
+            xAPICacheURL: xAPICacheURL,
+            prefersMP4Playback: prefersMP4Playback
         )
     }
 
@@ -260,6 +270,7 @@ private enum Keys {
     static let usesXAPIBearerToken = "usesXAPIBearerToken"
     static let showsPlayerDebugOverlay = "showsPlayerDebugOverlay"
     static let showsNextLaunchCountdown = "showsNextLaunchCountdown"
+    static let prefersMP4Playback = "prefersMP4Playback"
     static let dailyCache = "dailyBroadcastCache"
 }
 

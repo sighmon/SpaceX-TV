@@ -688,6 +688,10 @@ private struct BroadcastCard: View {
                     .padding(.bottom, 24)
                     .frame(maxWidth: .infinity, alignment: .bottomLeading)
             }
+            .overlay(alignment: .topTrailing) {
+                cardBadges
+                    .padding(14)
+            }
             .frame(maxWidth: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .background(.white.opacity(isFocused ? 0.20 : 0.08), in: RoundedRectangle(cornerRadius: 8))
@@ -736,6 +740,29 @@ private struct BroadcastCard: View {
     }
 
     @ViewBuilder
+    private var cardBadges: some View {
+        HStack(spacing: 8) {
+            if broadcast.isLive == true {
+                Text("LIVE")
+                    .font(.caption2.weight(.black))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Color.red, in: Capsule())
+            }
+
+            if broadcast.sourceKind == .xBroadcast && broadcast.isPinned {
+                Image(systemName: "pin.fill")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 26, height: 26)
+                    .background(.black.opacity(0.56), in: Circle())
+                    .accessibilityLabel("Pinned X post")
+            }
+        }
+    }
+
+    @ViewBuilder
     private var metadata: some View {
         if let publishedAt = broadcast.publishedAt {
             HStack(spacing: 10) {
@@ -751,7 +778,7 @@ private struct BroadcastCard: View {
             Text("\(broadcast.galleryImages.count) photos")
                 .lineLimit(1)
                 .font(.caption2.weight(.medium))
-                .foregroundStyle(.gray.opacity(0.6))
+            .foregroundStyle(.gray.opacity(0.6))
         }
     }
 
@@ -934,8 +961,10 @@ private extension Broadcast {
             sourceURL: URL(string: "https://x.com/SpaceX/status/preview-starship")!,
             sourceKind: .xBroadcast,
             tweetText: "Watch Starship's next integrated flight test live from Starbase.",
-            publishedAt: Date(timeIntervalSince1970: 1_780_128_000),
-            artworkName: "SpaceX"
+            publishedAt: Date().addingTimeInterval(-3 * 60),
+            artworkName: "SpaceX",
+            isPinned: true,
+            isLive: true
         ),
         Broadcast(
             id: UUID(uuidString: "7A2799E0-B06F-4D9B-A450-B76093C978E0")!,
@@ -945,7 +974,8 @@ private extension Broadcast {
             sourceKind: .xBroadcast,
             tweetText: "Falcon 9 launches a rideshare mission to orbit from Cape Canaveral.",
             publishedAt: Date(timeIntervalSince1970: 1_779_264_000),
-            artworkName: "SpaceX"
+            artworkName: "SpaceX",
+            isPinned: true
         ),
         Broadcast(
             id: UUID(uuidString: "18189ACD-8B1F-422D-AE12-9940D5266774")!,
