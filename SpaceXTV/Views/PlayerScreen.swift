@@ -225,6 +225,9 @@ struct PlayerScreen: View {
                             Task {
                                 await model.refreshStreamAfterPlaybackFailure(resumePosition: resumePosition)
                             }
+                        },
+                        onFullScreenDismissed: {
+                            dismiss()
                         }
                     ) { line in
                         model.appendPlayerDebug(line)
@@ -345,23 +348,31 @@ struct TVPlayerView: UIViewControllerRepresentable {
     var onPlaybackPausedChanged: (Bool) -> Void
     var onEnded: () -> Void
     var onPlaybackFailure: (Double?) -> Void
+    var onFullScreenDismissed: () -> Void
     var onDebug: (String) -> Void
 
-    func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let controller = AVPlayerViewController()
+    func makeUIViewController(context: Context) -> PlayerHostViewController {
+        let host = PlayerHostViewController()
+        host.onFullScreenDismissed = onFullScreenDismissed
+        let controller = host.playerController
         context.coordinator.lastPlaybackGeneration = playbackGeneration
         controller.player = context.coordinator.makePlayer(for: streamURL, title: title)
         controller.showsPlaybackControls = true
         controller.videoGravity = .resizeAspect
+#if !os(tvOS)
+        controller.exitsFullScreenWhenPlaybackEnds = true
+#endif
         context.coordinator.installTapRecognizer(on: controller.view)
         controller.player?.play()
-        return controller
+        return host
     }
 
-    func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
+    func updateUIViewController(_ host: PlayerHostViewController, context: Context) {
+        let controller = host.playerController
         context.coordinator.onTapped = onTapped
         context.coordinator.onPlaybackPausedChanged = onPlaybackPausedChanged
         context.coordinator.onPlaybackFailure = onPlaybackFailure
+        host.onFullScreenDismissed = onFullScreenDismissed
         context.coordinator.updatePlaybackTitle(title, item: controller.player?.currentItem)
         let currentURL = (controller.player?.currentItem?.asset as? AVURLAsset)?.url
         if context.coordinator.lastReplayRequest != replayRequest {
@@ -390,7 +401,11 @@ struct TVPlayerView: UIViewControllerRepresentable {
         player.play()
     }
 
-    static func dismantleUIViewController(_ controller: AVPlayerViewController, coordinator: Coordinator) {
+    static func dismantleUIViewController(_ host: PlayerHostViewController, coordinator: Coordinator) {
+        let controller = host.playerController
+        if controller.presentingViewController != nil {
+            controller.dismiss(animated: false)
+        }
         coordinator.stop(controller.player)
         controller.player = nil
     }
@@ -404,6 +419,57 @@ struct TVPlayerView: UIViewControllerRepresentable {
             onPlaybackFailure: onPlaybackFailure,
             onDebug: onDebug
         )
+    }
+
+    final class PlayerHostViewController: UIViewController {
+        let playerController = AVPlayerViewController()
+        private var hasPresentedFullScreenPlayer = false
+        private var hasReportedFullScreenDismissal = false
+        private var isPlayerEmbedded = false
+        var onFullScreenDismissed: (() -> Void)?
+
+        override func viewDidLoad() {
+            super.viewDidLoad()
+            view.backgroundColor = .black
+#if os(tvOS)
+            embedPlayerIfNeeded()
+#endif
+        }
+
+#if !os(tvOS)
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+
+            guard !hasPresentedFullScreenPlayer else {
+                guard !hasReportedFullScreenDismissal else { return }
+                hasReportedFullScreenDismissal = true
+                onFullScreenDismissed?()
+                return
+            }
+
+            hasPresentedFullScreenPlayer = true
+            playerController.modalPresentationStyle = .fullScreen
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.presentedViewController == nil else { return }
+                self.present(self.playerController, animated: false)
+            }
+        }
+#endif
+
+        private func embedPlayerIfNeeded() {
+            guard !isPlayerEmbedded, playerController.parent == nil else { return }
+            addChild(playerController)
+            view.addSubview(playerController.view)
+            playerController.view.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                playerController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                playerController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                playerController.view.topAnchor.constraint(equalTo: view.topAnchor),
+                playerController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            ])
+            playerController.didMove(toParent: self)
+            isPlayerEmbedded = true
+        }
     }
 
     final class Coordinator: NSObject {
