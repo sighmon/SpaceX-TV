@@ -355,9 +355,24 @@ struct TVPlayerView: UIViewControllerRepresentable {
         controller.showsPlaybackControls = true
         controller.videoGravity = .resizeAspect
 #if !os(tvOS)
+        host.isModalInPresentation = true
+        host.shouldReportFullScreenDismissal = {
+            !context.coordinator.isPictureInPicturePresentationActive
+        }
+        context.coordinator.hostController = host
+        controller.delegate = context.coordinator
+        controller.isModalInPresentation = true
+        controller.allowsPictureInPicturePlayback = AVPictureInPictureController.isPictureInPictureSupported()
+        if #available(iOS 14.2, *) {
+            controller.canStartPictureInPictureAutomaticallyFromInline = true
+        }
         controller.exitsFullScreenWhenPlaybackEnds = true
 #endif
         context.coordinator.installTapRecognizer(on: controller.view)
+#if !os(tvOS)
+        context.coordinator.installPinchRecognizer(on: controller.view, playerController: controller)
+        context.coordinator.installHorizontalPanBlocker(on: controller.view)
+#endif
         controller.player?.play()
         return host
     }
@@ -368,6 +383,13 @@ struct TVPlayerView: UIViewControllerRepresentable {
         context.coordinator.onPlaybackPausedChanged = onPlaybackPausedChanged
         context.coordinator.onPlaybackFailure = onPlaybackFailure
         host.onFullScreenDismissed = onFullScreenDismissed
+#if !os(tvOS)
+        host.shouldReportFullScreenDismissal = {
+            !context.coordinator.isPictureInPicturePresentationActive
+        }
+        context.coordinator.hostController = host
+        controller.delegate = context.coordinator
+#endif
         context.coordinator.updatePlaybackTitle(title, item: controller.player?.currentItem)
         let currentURL = (controller.player?.currentItem?.asset as? AVURLAsset)?.url
 
@@ -415,6 +437,9 @@ struct TVPlayerView: UIViewControllerRepresentable {
         private var hasReportedFullScreenDismissal = false
         private var isPlayerEmbedded = false
         var onFullScreenDismissed: (() -> Void)?
+#if !os(tvOS)
+        var shouldReportFullScreenDismissal: (() -> Bool)?
+#endif
 
         override func viewDidLoad() {
             super.viewDidLoad()
@@ -430,6 +455,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
 
             guard !hasPresentedFullScreenPlayer else {
                 guard !hasReportedFullScreenDismissal else { return }
+                guard shouldReportFullScreenDismissal?() ?? true else { return }
                 hasReportedFullScreenDismissal = true
                 onFullScreenDismissed?()
                 return
@@ -437,6 +463,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
 
             hasPresentedFullScreenPlayer = true
             playerController.modalPresentationStyle = .fullScreen
+            playerController.isModalInPresentation = true
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.presentedViewController == nil else { return }
                 self.present(self.playerController, animated: false)
@@ -475,6 +502,18 @@ struct TVPlayerView: UIViewControllerRepresentable {
         private var stallObserver: NSObjectProtocol?
         private var accessLogObserver: NSObjectProtocol?
         private weak var tapRecognizer: UITapGestureRecognizer?
+#if !os(tvOS)
+        weak var hostController: PlayerHostViewController?
+        private var isPictureInPictureStarting = false
+        private var isPictureInPictureActive = false
+        private var isPictureInPictureRestoring = false
+        private weak var pinchRecognizer: UIPinchGestureRecognizer?
+        private weak var horizontalPanBlocker: UIPanGestureRecognizer?
+        private weak var pinchPlayerController: AVPlayerViewController?
+        var isPictureInPicturePresentationActive: Bool {
+            isPictureInPictureStarting || isPictureInPictureActive || isPictureInPictureRestoring
+        }
+#endif
 
         init(
             playbackTitle: String,
@@ -517,6 +556,43 @@ struct TVPlayerView: UIViewControllerRepresentable {
         @objc private func handleTap() {
             onTapped()
         }
+
+#if !os(tvOS)
+        func installPinchRecognizer(on view: UIView, playerController: AVPlayerViewController) {
+            pinchPlayerController = playerController
+            guard pinchRecognizer == nil else { return }
+            let recognizer = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+            recognizer.cancelsTouchesInView = false
+            view.addGestureRecognizer(recognizer)
+            pinchRecognizer = recognizer
+        }
+
+        @objc private func handlePinch(_ recognizer: UIPinchGestureRecognizer) {
+            guard recognizer.state == .ended else { return }
+            if recognizer.scale > 1.08 {
+                pinchPlayerController?.videoGravity = .resizeAspectFill
+                onDebug("Pinch zoom: fill")
+            } else if recognizer.scale < 0.92 {
+                pinchPlayerController?.videoGravity = .resizeAspect
+                onDebug("Pinch zoom: fit")
+            }
+        }
+
+        func installHorizontalPanBlocker(on view: UIView) {
+            guard horizontalPanBlocker == nil else { return }
+            let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handleBlockedHorizontalPan(_:)))
+            recognizer.maximumNumberOfTouches = 1
+            recognizer.cancelsTouchesInView = true
+            recognizer.delegate = self
+            view.addGestureRecognizer(recognizer)
+            horizontalPanBlocker = recognizer
+        }
+
+        @objc private func handleBlockedHorizontalPan(_ recognizer: UIPanGestureRecognizer) {
+            guard recognizer.state == .began else { return }
+            onDebug("Blocked horizontal player drag")
+        }
+#endif
 
         func makePlayer(for streamURL: URL, title: String) -> AVPlayer {
             onDebug("Creating player for: \(streamURL.absoluteString)")
@@ -701,6 +777,90 @@ struct TVPlayerView: UIViewControllerRepresentable {
         }
     }
 }
+
+#if !os(tvOS)
+extension TVPlayerView.Coordinator: UIGestureRecognizerDelegate {
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer === horizontalPanBlocker,
+              let recognizer = gestureRecognizer as? UIPanGestureRecognizer,
+              let view = gestureRecognizer.view else {
+            return true
+        }
+
+        let velocity = recognizer.velocity(in: view)
+        return abs(velocity.x) > abs(velocity.y) * 1.35
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard gestureRecognizer === horizontalPanBlocker,
+              let view = gestureRecognizer.view else {
+            return true
+        }
+
+        let point = touch.location(in: view)
+        let topControlsHeight = view.bounds.height * 0.14
+        let bottomControlsHeight = view.bounds.height * 0.28
+        return point.y > topControlsHeight && point.y < view.bounds.height - bottomControlsHeight
+    }
+}
+
+extension TVPlayerView.Coordinator: AVPlayerViewControllerDelegate {
+    func playerViewControllerWillStartPictureInPicture(_ playerViewController: AVPlayerViewController) {
+        isPictureInPictureStarting = true
+        onDebug("Picture in Picture starting")
+    }
+
+    func playerViewControllerDidStartPictureInPicture(_ playerViewController: AVPlayerViewController) {
+        isPictureInPictureStarting = false
+        isPictureInPictureActive = true
+        onDebug("Picture in Picture started")
+    }
+
+    func playerViewController(
+        _ playerViewController: AVPlayerViewController,
+        failedToStartPictureInPictureWithError error: Error
+    ) {
+        isPictureInPictureStarting = false
+        isPictureInPictureActive = false
+        isPictureInPictureRestoring = false
+        onDebug("Picture in Picture failed: \(error.localizedDescription)")
+    }
+
+    func playerViewControllerWillStopPictureInPicture(_ playerViewController: AVPlayerViewController) {
+        isPictureInPictureRestoring = true
+        onDebug("Picture in Picture stopping")
+    }
+
+    func playerViewControllerDidStopPictureInPicture(_ playerViewController: AVPlayerViewController) {
+        isPictureInPictureStarting = false
+        isPictureInPictureActive = false
+        isPictureInPictureRestoring = false
+        onDebug("Picture in Picture stopped")
+    }
+
+    func playerViewController(
+        _ playerViewController: AVPlayerViewController,
+        restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void
+    ) {
+        isPictureInPictureRestoring = true
+        guard let hostController else {
+            completionHandler(false)
+            return
+        }
+
+        if hostController.presentedViewController === playerViewController {
+            completionHandler(true)
+            return
+        }
+
+        playerViewController.modalPresentationStyle = .fullScreen
+        playerViewController.isModalInPresentation = true
+        hostController.present(playerViewController, animated: true) {
+            completionHandler(true)
+        }
+    }
+}
+#endif
 
 private struct PlayerDebugOverlay: View {
     var lines: [String]
