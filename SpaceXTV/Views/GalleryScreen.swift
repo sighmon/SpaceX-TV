@@ -18,6 +18,7 @@ struct GalleryScreen: View {
 #else
     @State private var showsBackButton = true
     @State private var backButtonHideTask: Task<Void, Never>?
+    @GestureState private var dismissDragOffset: CGFloat = 0
 #endif
 
     var body: some View {
@@ -81,6 +82,9 @@ struct GalleryScreen: View {
             }
 #endif
         }
+#if !os(tvOS)
+        .offset(y: dismissDragOffset)
+#endif
         .toolbar(.hidden, for: .navigationBar)
         .preferredColorScheme(.dark)
 #if !os(tvOS)
@@ -141,7 +145,9 @@ struct GalleryScreen: View {
                 showBackButtonTemporarily()
             }
         )
+        .simultaneousGesture(dismissDragGesture)
         .animation(.easeOut(duration: 0.18), value: showsBackButton)
+        .animation(.easeOut(duration: 0.18), value: dismissDragOffset)
         .onDisappear {
             backButtonHideTask?.cancel()
         }
@@ -237,6 +243,25 @@ struct GalleryScreen: View {
     }
 
 #if !os(tvOS)
+    private var dismissDragGesture: some Gesture {
+        DragGesture(minimumDistance: 24, coordinateSpace: .global)
+            .updating($dismissDragOffset) { value, state, _ in
+                guard isDismissDrag(value.translation) else { return }
+                state = min(value.translation.height, 160)
+            }
+            .onEnded { value in
+                guard isDismissDrag(value.translation),
+                      value.translation.height > 120 || value.predictedEndTranslation.height > 220 else {
+                    return
+                }
+                close()
+            }
+    }
+
+    private func isDismissDrag(_ translation: CGSize) -> Bool {
+        translation.height > 0 && translation.height > abs(translation.width) * 1.35
+    }
+
     private func showBackButtonTemporarily() {
         showsBackButton = true
         backButtonHideTask?.cancel()
