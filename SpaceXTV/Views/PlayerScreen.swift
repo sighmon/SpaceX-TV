@@ -513,6 +513,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
         private weak var videoSurfaceLongPressBlocker: UILongPressGestureRecognizer?
         private weak var pinchPlayerController: AVPlayerViewController?
         private weak var interactionPlayerController: AVPlayerViewController?
+        private var hasRequestedPanDismiss = false
         var isPictureInPicturePresentationActive: Bool {
             isPictureInPictureStarting || isPictureInPictureActive || isPictureInPictureRestoring
         }
@@ -604,9 +605,18 @@ struct TVPlayerView: UIViewControllerRepresentable {
         }
 
         @objc private func handleBlockedVideoSurfacePan(_ recognizer: UIPanGestureRecognizer) {
-            guard recognizer.state == .began else { return }
-            convertVideoSurfaceDragToTap()
-            onDebug("Blocked player surface pan")
+            switch recognizer.state {
+            case .began:
+                hasRequestedPanDismiss = false
+                convertVideoSurfaceDragToTap()
+                onDebug("Blocked player surface pan")
+            case .changed:
+                requestDismissIfNeeded(for: recognizer)
+            case .ended, .cancelled, .failed:
+                hasRequestedPanDismiss = false
+            default:
+                break
+            }
         }
 
         @objc private func handleBlockedVideoSurfaceLongPress(_ recognizer: UILongPressGestureRecognizer) {
@@ -621,6 +631,40 @@ struct TVPlayerView: UIViewControllerRepresentable {
             controller.showsPlaybackControls = false
             DispatchQueue.main.async {
                 controller.showsPlaybackControls = true
+            }
+        }
+
+        private func requestDismissIfNeeded(for recognizer: UIPanGestureRecognizer) {
+            guard !hasRequestedPanDismiss,
+                  let view = recognizer.view else { return }
+
+            let translation = recognizer.translation(in: view)
+            let velocity = recognizer.velocity(in: view)
+            guard translation.y > 120,
+                  translation.y > abs(translation.x) * 1.35,
+                  velocity.y > 250 else { return }
+
+            hasRequestedPanDismiss = true
+            onDebug("Dismissed player from downward pan")
+            dismissPresentedPlayer()
+        }
+
+        private func dismissPresentedPlayer() {
+            guard let hostController else { return }
+            let completeDismissal = {
+                hostController.onFullScreenDismissed?()
+            }
+
+            if let presentedViewController = hostController.presentedViewController {
+                presentedViewController.dismiss(animated: true) {
+                    completeDismissal()
+                }
+            } else if hostController.playerController.presentingViewController != nil {
+                hostController.playerController.dismiss(animated: true) {
+                    completeDismissal()
+                }
+            } else {
+                completeDismissal()
             }
         }
 #endif
