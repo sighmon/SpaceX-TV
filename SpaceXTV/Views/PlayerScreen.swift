@@ -372,7 +372,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
         context.coordinator.installTapRecognizer(on: controller.view)
 #else
         context.coordinator.installPinchRecognizer(on: controller.view, playerController: controller)
-        context.coordinator.installVideoSurfaceDragBlockers(on: controller.view)
+        context.coordinator.installVideoSurfaceDragBlockers(on: controller.view, playerController: controller)
 #endif
         controller.player?.play()
         return host
@@ -512,6 +512,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
         private weak var videoSurfacePanBlocker: UIPanGestureRecognizer?
         private weak var videoSurfaceLongPressBlocker: UILongPressGestureRecognizer?
         private weak var pinchPlayerController: AVPlayerViewController?
+        private weak var interactionPlayerController: AVPlayerViewController?
         var isPictureInPicturePresentationActive: Bool {
             isPictureInPictureStarting || isPictureInPictureActive || isPictureInPictureRestoring
         }
@@ -580,7 +581,8 @@ struct TVPlayerView: UIViewControllerRepresentable {
             }
         }
 
-        func installVideoSurfaceDragBlockers(on view: UIView) {
+        func installVideoSurfaceDragBlockers(on view: UIView, playerController: AVPlayerViewController) {
+            interactionPlayerController = playerController
             guard videoSurfacePanBlocker == nil, videoSurfaceLongPressBlocker == nil else { return }
 
             let panRecognizer = UIPanGestureRecognizer(target: self, action: #selector(handleBlockedVideoSurfacePan(_:)))
@@ -603,12 +605,23 @@ struct TVPlayerView: UIViewControllerRepresentable {
 
         @objc private func handleBlockedVideoSurfacePan(_ recognizer: UIPanGestureRecognizer) {
             guard recognizer.state == .began else { return }
+            convertVideoSurfaceDragToTap()
             onDebug("Blocked player surface pan")
         }
 
         @objc private func handleBlockedVideoSurfaceLongPress(_ recognizer: UILongPressGestureRecognizer) {
             guard recognizer.state == .began else { return }
+            convertVideoSurfaceDragToTap()
             onDebug("Blocked player surface long press")
+        }
+
+        private func convertVideoSurfaceDragToTap() {
+            onTapped()
+            guard let controller = interactionPlayerController else { return }
+            controller.showsPlaybackControls = false
+            DispatchQueue.main.async {
+                controller.showsPlaybackControls = true
+            }
         }
 #endif
 
@@ -803,12 +816,6 @@ extension TVPlayerView.Coordinator: UIGestureRecognizerDelegate {
             return true
         }
 
-        if let recognizer = gestureRecognizer as? UIPanGestureRecognizer,
-           let view = recognizer.view {
-            let velocity = recognizer.velocity(in: view)
-            return hypot(velocity.x, velocity.y) > 30
-        }
-
         return true
     }
 
@@ -819,13 +826,25 @@ extension TVPlayerView.Coordinator: UIGestureRecognizerDelegate {
         }
 
         let point = touch.location(in: view)
-        let topControlsHeight = view.bounds.height * 0.24
-        let bottomControlsHeight = view.bounds.height * 0.38
-        let sideControlsWidth = view.bounds.width * 0.08
-        return point.y > topControlsHeight
-            && point.y < view.bounds.height - bottomControlsHeight
-            && point.x > sideControlsWidth
-            && point.x < view.bounds.width - sideControlsWidth
+        return !containsInteractiveControl(in: view, at: point)
+    }
+
+    private func containsInteractiveControl(in view: UIView, at point: CGPoint) -> Bool {
+        guard !view.isHidden,
+              view.alpha > 0.01,
+              view.isUserInteractionEnabled,
+              view.point(inside: point, with: nil) else {
+            return false
+        }
+
+        for subview in view.subviews.reversed() {
+            let convertedPoint = view.convert(point, to: subview)
+            if containsInteractiveControl(in: subview, at: convertedPoint) {
+                return true
+            }
+        }
+
+        return view is UIControl
     }
 }
 
