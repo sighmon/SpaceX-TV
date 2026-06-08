@@ -368,10 +368,11 @@ struct TVPlayerView: UIViewControllerRepresentable {
         }
         controller.exitsFullScreenWhenPlaybackEnds = true
 #endif
+#if os(tvOS)
         context.coordinator.installTapRecognizer(on: controller.view)
-#if !os(tvOS)
+#else
         context.coordinator.installPinchRecognizer(on: controller.view, playerController: controller)
-        context.coordinator.installHorizontalPanBlocker(on: controller.view)
+        context.coordinator.installVideoSurfaceDragBlockers(on: controller.view)
 #endif
         controller.player?.play()
         return host
@@ -508,7 +509,8 @@ struct TVPlayerView: UIViewControllerRepresentable {
         private var isPictureInPictureActive = false
         private var isPictureInPictureRestoring = false
         private weak var pinchRecognizer: UIPinchGestureRecognizer?
-        private weak var horizontalPanBlocker: UIPanGestureRecognizer?
+        private weak var videoSurfacePanBlocker: UIPanGestureRecognizer?
+        private weak var videoSurfaceLongPressBlocker: UILongPressGestureRecognizer?
         private weak var pinchPlayerController: AVPlayerViewController?
         var isPictureInPicturePresentationActive: Bool {
             isPictureInPictureStarting || isPictureInPictureActive || isPictureInPictureRestoring
@@ -578,19 +580,35 @@ struct TVPlayerView: UIViewControllerRepresentable {
             }
         }
 
-        func installHorizontalPanBlocker(on view: UIView) {
-            guard horizontalPanBlocker == nil else { return }
-            let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handleBlockedHorizontalPan(_:)))
-            recognizer.maximumNumberOfTouches = 1
-            recognizer.cancelsTouchesInView = true
-            recognizer.delegate = self
-            view.addGestureRecognizer(recognizer)
-            horizontalPanBlocker = recognizer
+        func installVideoSurfaceDragBlockers(on view: UIView) {
+            guard videoSurfacePanBlocker == nil, videoSurfaceLongPressBlocker == nil else { return }
+
+            let panRecognizer = UIPanGestureRecognizer(target: self, action: #selector(handleBlockedVideoSurfacePan(_:)))
+            panRecognizer.maximumNumberOfTouches = 1
+            panRecognizer.cancelsTouchesInView = true
+            panRecognizer.delegate = self
+            view.addGestureRecognizer(panRecognizer)
+
+            let longPressRecognizer = UILongPressGestureRecognizer(target: self, action: #selector(handleBlockedVideoSurfaceLongPress(_:)))
+            longPressRecognizer.minimumPressDuration = 0.18
+            longPressRecognizer.allowableMovement = 12
+            longPressRecognizer.numberOfTouchesRequired = 1
+            longPressRecognizer.cancelsTouchesInView = true
+            longPressRecognizer.delegate = self
+            view.addGestureRecognizer(longPressRecognizer)
+
+            videoSurfacePanBlocker = panRecognizer
+            videoSurfaceLongPressBlocker = longPressRecognizer
         }
 
-        @objc private func handleBlockedHorizontalPan(_ recognizer: UIPanGestureRecognizer) {
+        @objc private func handleBlockedVideoSurfacePan(_ recognizer: UIPanGestureRecognizer) {
             guard recognizer.state == .began else { return }
-            onDebug("Blocked horizontal player drag")
+            onDebug("Blocked player surface pan")
+        }
+
+        @objc private func handleBlockedVideoSurfaceLongPress(_ recognizer: UILongPressGestureRecognizer) {
+            guard recognizer.state == .began else { return }
+            onDebug("Blocked player surface long press")
         }
 #endif
 
@@ -781,26 +799,33 @@ struct TVPlayerView: UIViewControllerRepresentable {
 #if !os(tvOS)
 extension TVPlayerView.Coordinator: UIGestureRecognizerDelegate {
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        guard gestureRecognizer === horizontalPanBlocker,
-              let recognizer = gestureRecognizer as? UIPanGestureRecognizer,
-              let view = gestureRecognizer.view else {
+        guard gestureRecognizer === videoSurfacePanBlocker || gestureRecognizer === videoSurfaceLongPressBlocker else {
             return true
         }
 
-        let velocity = recognizer.velocity(in: view)
-        return abs(velocity.x) > abs(velocity.y) * 1.35
+        if let recognizer = gestureRecognizer as? UIPanGestureRecognizer,
+           let view = recognizer.view {
+            let velocity = recognizer.velocity(in: view)
+            return hypot(velocity.x, velocity.y) > 30
+        }
+
+        return true
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        guard gestureRecognizer === horizontalPanBlocker,
+        guard gestureRecognizer === videoSurfacePanBlocker || gestureRecognizer === videoSurfaceLongPressBlocker,
               let view = gestureRecognizer.view else {
             return true
         }
 
         let point = touch.location(in: view)
-        let topControlsHeight = view.bounds.height * 0.14
-        let bottomControlsHeight = view.bounds.height * 0.28
-        return point.y > topControlsHeight && point.y < view.bounds.height - bottomControlsHeight
+        let topControlsHeight = view.bounds.height * 0.24
+        let bottomControlsHeight = view.bounds.height * 0.38
+        let sideControlsWidth = view.bounds.width * 0.08
+        return point.y > topControlsHeight
+            && point.y < view.bounds.height - bottomControlsHeight
+            && point.x > sideControlsWidth
+            && point.x < view.bounds.width - sideControlsWidth
     }
 }
 
