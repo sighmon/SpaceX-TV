@@ -969,8 +969,9 @@ private extension Broadcast {
             sourceURL: URL(string: "https://x.com/SpaceX/status/preview-starship")!,
             sourceKind: .xBroadcast,
             tweetText: "Watch Starship's next integrated flight test live from Starbase.",
-            publishedAt: Date(timeIntervalSince1970: 1_780_128_000),
-            artworkName: "SpaceX"
+            publishedAt: Date().addingTimeInterval(-3 * 60),
+            artworkName: "SpaceX",
+            isPinned: true
         ),
         Broadcast(
             id: UUID(uuidString: "7A2799E0-B06F-4D9B-A450-B76093C978E0")!,
@@ -980,7 +981,8 @@ private extension Broadcast {
             sourceKind: .xBroadcast,
             tweetText: "Falcon 9 launches a rideshare mission to orbit from Cape Canaveral.",
             publishedAt: Date(timeIntervalSince1970: 1_779_264_000),
-            artworkName: "SpaceX"
+            artworkName: "SpaceX",
+            isPinned: true
         ),
         Broadcast(
             id: UUID(uuidString: "18189ACD-8B1F-422D-AE12-9940D5266774")!,
