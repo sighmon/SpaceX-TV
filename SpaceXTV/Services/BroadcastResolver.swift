@@ -452,60 +452,10 @@ struct BroadcastResolver {
             return streamURL
         }
 
-        var request = URLRequest(url: streamURL)
-        request.setValue("Mozilla/5.0 AppleTV SpaceXTV/1.0", forHTTPHeaderField: "User-Agent")
-        request.setValue("https://www.periscope.tv/", forHTTPHeaderField: "Referer")
-        request.timeoutInterval = 15
-
-        let (data, response) = try await session.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200 ..< 300).contains(httpResponse.statusCode),
-              let playlist = String(data: data, encoding: .utf8) else {
-            return streamURL
-        }
-
-        guard let variant = highestBandwidthVariant(in: playlist, relativeTo: streamURL) else {
-            return streamURL
-        }
-
-        return variant
-    }
-
-    private func highestBandwidthVariant(in playlist: String, relativeTo masterURL: URL) -> URL? {
-        let lines = playlist.components(separatedBy: .newlines)
-        var bestBandwidth = 0
-        var bestURL: URL?
-        var pendingBandwidth: Int?
-
-        for line in lines {
-            if line.hasPrefix("#EXT-X-STREAM-INF:") {
-                pendingBandwidth = bandwidth(from: line)
-                continue
-            }
-
-            guard let bandwidth = pendingBandwidth,
-                  !line.isEmpty,
-                  !line.hasPrefix("#"),
-                  bandwidth > bestBandwidth else {
-                continue
-            }
-
-            bestBandwidth = bandwidth
-            bestURL = URL(string: line, relativeTo: masterURL)?.absoluteURL
-            pendingBandwidth = nil
-        }
-
-        return bestURL
-    }
-
-    private func bandwidth(from streamInfo: String) -> Int? {
-        guard let range = streamInfo.range(of: #"BANDWIDTH=(\d+)"#, options: .regularExpression) else {
-            return nil
-        }
-
-        let value = streamInfo[range]
-            .replacingOccurrences(of: "BANDWIDTH=", with: "")
-        return Int(value)
+        // Keep HLS playback on the master playlist. SpaceX/X archive streams can
+        // include signed variant and segment URLs, and pinning playback to a
+        // resolved child playlist can expire during long sessions or later seeks.
+        return streamURL
     }
 
     private func pageThumbnailURL(in body: String) -> URL? {

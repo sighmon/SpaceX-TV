@@ -34,9 +34,14 @@ struct BroadcastDiscovery {
         BroadcastResolver(session: session)
     }
 
-    func discoverRecentSpaceXBroadcasts(limit: Int = 10, xAPIBearerToken: String?) async throws -> BroadcastDiscoveryResult {
+    func discoverRecentSpaceXBroadcasts(
+        limit: Int = 10,
+        xAPIBearerToken: String?,
+        prefersMP4Playback: Bool = true
+    ) async throws -> BroadcastDiscoveryResult {
         var report = DiscoveryReport()
         report.add("Starting SpaceX post discovery")
+        report.add("SpaceX CMS playback preference: \(prefersMP4Playback ? "MP4" : "HLS")")
         let timelineLimit = timelineFetchLimit(for: limit)
         report.add("X API timeline fetch limit: \(timelineLimit)")
 
@@ -47,12 +52,17 @@ struct BroadcastDiscovery {
         )
         report.add("Candidate statuses: \(candidates.count)")
 
-        return try await discoveryResult(from: candidates, report: &report)
+        return try await discoveryResult(from: candidates, prefersMP4Playback: prefersMP4Playback, report: &report)
     }
 
-    func discoverRecentSpaceXBroadcasts(limit: Int = 10, xAPICacheURL: URL) async throws -> BroadcastDiscoveryResult {
+    func discoverRecentSpaceXBroadcasts(
+        limit: Int = 10,
+        xAPICacheURL: URL,
+        prefersMP4Playback: Bool = true
+    ) async throws -> BroadcastDiscoveryResult {
         var report = DiscoveryReport()
         report.add("Starting SpaceX post discovery")
+        report.add("SpaceX CMS playback preference: \(prefersMP4Playback ? "MP4" : "HLS")")
         let timelineLimit = timelineFetchLimit(for: limit)
         report.add("X API cache target timeline limit: \(timelineLimit)")
 
@@ -63,21 +73,31 @@ struct BroadcastDiscovery {
         )
         report.add("Candidate statuses: \(candidates.count)")
 
-        return try await discoveryResult(from: candidates, report: &report)
+        return try await discoveryResult(from: candidates, prefersMP4Playback: prefersMP4Playback, report: &report)
     }
 
-    private func discoveryResult(from initialCandidates: [BroadcastCandidate], report: inout DiscoveryReport) async throws -> BroadcastDiscoveryResult {
+    private func discoveryResult(
+        from initialCandidates: [BroadcastCandidate],
+        prefersMP4Playback: Bool,
+        report: inout DiscoveryReport
+    ) async throws -> BroadcastDiscoveryResult {
         var candidates = deduplicatedCandidates(initialCandidates)
         var appendedStarshipFilmCandidates: [BroadcastCandidate] = []
         var appendedStarshipFlightTestCandidates: [BroadcastCandidate] = []
         do {
-            appendedStarshipFilmCandidates = try await recentStarshipFilmCandidates(report: &report)
+            appendedStarshipFilmCandidates = try await recentStarshipFilmCandidates(
+                prefersMP4Playback: prefersMP4Playback,
+                report: &report
+            )
             report.add("Starship film candidates: \(appendedStarshipFilmCandidates.count)")
         } catch {
             report.add("Starship film discovery failed: \(debugMessage(for: error))")
         }
         do {
-            appendedStarshipFlightTestCandidates = try await starshipFlightTestCandidates(report: &report)
+            appendedStarshipFlightTestCandidates = try await starshipFlightTestCandidates(
+                prefersMP4Playback: prefersMP4Playback,
+                report: &report
+            )
             report.add("Starship flight test candidates: \(appendedStarshipFlightTestCandidates.count)")
         } catch {
             report.add("Starship flight test discovery failed: \(debugMessage(for: error))")
@@ -465,13 +485,16 @@ struct BroadcastDiscovery {
         return candidates.filter { seen.insert($0.dedupeKey).inserted }
     }
 
-    private func recentStarshipFilmCandidates(report: inout DiscoveryReport) async throws -> [BroadcastCandidate] {
+    private func recentStarshipFilmCandidates(
+        prefersMP4Playback: Bool,
+        report: inout DiscoveryReport
+    ) async throws -> [BroadcastCandidate] {
         report.add("SpaceX CMS GET: \(starshipPlaylistURL.path)")
         let data = try await spaceXCMSData(from: starshipPlaylistURL, report: &report)
         let playlist = try spaceXCMSDecoder().decode(SpaceXMediaPlaylist.self, from: data)
 
         return playlist.media.compactMap { media in
-            guard let streamURL = media.bestStreamURL else { return nil }
+            guard let streamURL = media.bestStreamURL(prefersMP4Playback: prefersMP4Playback) else { return nil }
             return BroadcastCandidate(
                 statusURL: streamURL,
                 dedupeKey: "spacex-media:\(media.documentID ?? media.link ?? streamURL.absoluteString)",
@@ -488,13 +511,16 @@ struct BroadcastDiscovery {
         }
     }
 
-    private func starshipFlightTestCandidates(report: inout DiscoveryReport) async throws -> [BroadcastCandidate] {
+    private func starshipFlightTestCandidates(
+        prefersMP4Playback: Bool,
+        report: inout DiscoveryReport
+    ) async throws -> [BroadcastCandidate] {
         report.add("SpaceX CMS GET: \(starshipFlightTestsPlaylistURL.path)")
         let data = try await spaceXCMSData(from: starshipFlightTestsPlaylistURL, report: &report)
         let playlist = try spaceXCMSDecoder().decode(SpaceXMediaPlaylist.self, from: data)
 
         let playlistCandidates: [BroadcastCandidate] = playlist.media.compactMap { media in
-            guard let streamURL = media.bestStreamURL else { return nil }
+            guard let streamURL = media.bestStarshipFlightTestURL(prefersMP4Playback: prefersMP4Playback) else { return nil }
             return BroadcastCandidate(
                 statusURL: streamURL,
                 dedupeKey: "spacex-starship-flight-test:\(media.starshipFlightTestKey ?? media.documentID ?? media.link ?? streamURL.absoluteString)",
@@ -1186,6 +1212,20 @@ private struct SpaceXMediaItem: Decodable {
 
     var bestStreamURL: URL? {
         autoStreamingLink ?? fhdStreamingLink ?? hdStreamingLink ?? uhdStreamingLink ?? fhdLink ?? hdLink ?? uhdLink
+    }
+
+    func bestStreamURL(prefersMP4Playback: Bool) -> URL? {
+        if prefersMP4Playback {
+            return fhdLink ?? hdLink ?? uhdLink ?? autoStreamingLink ?? fhdStreamingLink ?? hdStreamingLink ?? uhdStreamingLink
+        }
+        return bestStreamURL
+    }
+
+    func bestStarshipFlightTestURL(prefersMP4Playback: Bool) -> URL? {
+        if prefersMP4Playback {
+            return fhdLink ?? hdLink ?? autoStreamingLink ?? fhdStreamingLink ?? hdStreamingLink ?? uhdLink ?? uhdStreamingLink
+        }
+        return bestStreamURL
     }
 
     var bestSubtitle: String {

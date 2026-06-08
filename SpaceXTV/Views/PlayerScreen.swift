@@ -5,7 +5,7 @@ import SwiftUI
 final class PlayerViewModel: ObservableObject {
     enum State: Equatable {
         case resolving
-        case ready(URL, String)
+        case ready(URL, String, Int, Double?)
         case failed(String)
     }
 
@@ -13,6 +13,11 @@ final class PlayerViewModel: ObservableObject {
     @Published private(set) var debugLines: [String] = []
     private let broadcast: Broadcast
     private var hasStarted = false
+    private var playbackGeneration = 0
+    private var streamRefreshCount = 0
+    private var lastStreamRefreshDate: Date?
+    private var isRefreshingStream = false
+    private var usedFallbackStreamURLs = Set<URL>()
 
     init(broadcast: Broadcast) {
         self.broadcast = broadcast
@@ -30,7 +35,7 @@ final class PlayerViewModel: ObservableObject {
             let resolved = try await BroadcastResolver().resolve(broadcast)
             debugLines.append("Resolved stream: \(resolved.streamURL.absoluteString)")
             await preflight(resolved.streamURL)
-            state = .ready(resolved.streamURL, resolved.title ?? broadcast.title)
+            state = .ready(resolved.streamURL, resolved.title ?? broadcast.title, playbackGeneration, nil)
         } catch {
             let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             debugLines.append("Resolve failed: \(message)")
@@ -41,6 +46,66 @@ final class PlayerViewModel: ObservableObject {
     func appendPlayerDebug(_ line: String) {
         debugLines.append(line)
         print("[SpaceXTV] \(line)")
+    }
+
+    func refreshStreamAfterPlaybackFailure(resumePosition: Double?) async {
+        guard !isRefreshingStream else {
+            debugLines.append("Skipping stream refresh: refresh already in progress")
+            return
+        }
+        if let failedURL = currentStreamURL,
+           let fallbackURL = spaceXHLSFallbackURL(for: failedURL),
+           !usedFallbackStreamURLs.contains(fallbackURL) {
+            usedFallbackStreamURLs.insert(fallbackURL)
+            playbackGeneration += 1
+            debugLines.append("MP4 playback failed; falling back to HLS: \(fallbackURL.absoluteString)")
+            await preflight(fallbackURL)
+            state = .ready(fallbackURL, currentTitle ?? broadcast.title, playbackGeneration, resumePosition)
+            return
+        }
+
+        guard canRefreshStream else {
+            debugLines.append("Skipping stream refresh: refresh limit reached")
+            return
+        }
+
+        isRefreshingStream = true
+        defer { isRefreshingStream = false }
+        streamRefreshCount += 1
+        lastStreamRefreshDate = Date()
+        debugLines.append("Refreshing stream after playback failure at \(formattedTime(resumePosition))")
+
+        do {
+            let resolved = try await BroadcastResolver().resolve(broadcast)
+            playbackGeneration += 1
+            debugLines.append("Refreshed stream: \(resolved.streamURL.absoluteString)")
+            await preflight(resolved.streamURL)
+            state = .ready(resolved.streamURL, resolved.title ?? broadcast.title, playbackGeneration, resumePosition)
+        } catch {
+            let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            debugLines.append("Stream refresh failed: \(message)")
+            state = .failed(message)
+        }
+    }
+
+    private var canRefreshStream: Bool {
+        guard streamRefreshCount < 3 else { return false }
+        guard let lastStreamRefreshDate else { return true }
+        return Date().timeIntervalSince(lastStreamRefreshDate) > 20
+    }
+
+    private var currentStreamURL: URL? {
+        if case .ready(let url, _, _, _) = state {
+            return url
+        }
+        return nil
+    }
+
+    private var currentTitle: String? {
+        if case .ready(_, let title, _, _) = state {
+            return title
+        }
+        return nil
     }
 
     private func preflight(_ streamURL: URL) async {
@@ -66,6 +131,32 @@ final class PlayerViewModel: ObservableObject {
         } catch {
             debugLines.append("\(isPlaylist ? "HLS" : "Stream") preflight failed: \(error.localizedDescription)")
         }
+    }
+
+    private func formattedTime(_ seconds: Double?) -> String {
+        guard let seconds, seconds.isFinite else { return "unknown time" }
+        return "\(Int(seconds))s"
+    }
+
+    private func spaceXHLSFallbackURL(for streamURL: URL) -> URL? {
+        guard streamURL.pathExtension.lowercased() == "mp4",
+              streamURL.host?.lowercased().contains("content.spacex.com") == true else {
+            return nil
+        }
+
+        let filename = streamURL.deletingPathExtension().lastPathComponent
+        let suffixes = ["_1080P", "_720P", "_4K"]
+        guard let suffix = suffixes.first(where: { filename.hasSuffix($0) }) else {
+            return nil
+        }
+
+        let baseName = String(filename.dropLast(suffix.count))
+        let directoryURL = streamURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(baseName, isDirectory: true)
+        return directoryURL
+            .appendingPathComponent(baseName)
+            .appendingPathExtension("m3u8")
     }
 }
 
@@ -108,10 +199,12 @@ struct PlayerScreen: View {
                     .task {
                         await model.start()
                     }
-            case .ready(let url, _):
+            case .ready(let url, _, let playbackGeneration, let resumePosition):
                 ZStack(alignment: .bottomLeading) {
                     TVPlayerView(
                         streamURL: url,
+                        playbackGeneration: playbackGeneration,
+                        resumePosition: resumePosition,
                         replayRequest: replayRequest,
                         onTapped: {
                             showPlaybackBackButton()
@@ -126,6 +219,11 @@ struct PlayerScreen: View {
                         },
                         onEnded: {
                             showsCompletionOverlay = true
+                        },
+                        onPlaybackFailure: { resumePosition in
+                            Task {
+                                await model.refreshStreamAfterPlaybackFailure(resumePosition: resumePosition)
+                            }
                         }
                     ) { line in
                         model.appendPlayerDebug(line)
@@ -238,14 +336,18 @@ struct PlayerScreen: View {
 
 struct TVPlayerView: UIViewControllerRepresentable {
     var streamURL: URL
+    var playbackGeneration: Int
+    var resumePosition: Double?
     var replayRequest: Int
     var onTapped: () -> Void
     var onPlaybackPausedChanged: (Bool) -> Void
     var onEnded: () -> Void
+    var onPlaybackFailure: (Double?) -> Void
     var onDebug: (String) -> Void
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
+        context.coordinator.lastPlaybackGeneration = playbackGeneration
         controller.player = context.coordinator.makePlayer(for: streamURL)
         controller.showsPlaybackControls = true
         controller.videoGravity = .resizeAspect
@@ -257,6 +359,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
         context.coordinator.onTapped = onTapped
         context.coordinator.onPlaybackPausedChanged = onPlaybackPausedChanged
+        context.coordinator.onPlaybackFailure = onPlaybackFailure
         let currentURL = (controller.player?.currentItem?.asset as? AVURLAsset)?.url
         if context.coordinator.lastReplayRequest != replayRequest {
             context.coordinator.lastReplayRequest = replayRequest
@@ -266,10 +369,27 @@ struct TVPlayerView: UIViewControllerRepresentable {
             return
         }
 
-        guard currentURL != streamURL else { return }
+        guard currentURL != streamURL || context.coordinator.lastPlaybackGeneration != playbackGeneration else { return }
 
-        controller.player = context.coordinator.makePlayer(for: streamURL)
-        controller.player?.play()
+        context.coordinator.lastPlaybackGeneration = playbackGeneration
+        let oldPlayer = controller.player
+        let player = context.coordinator.makePlayer(for: streamURL)
+        controller.player = player
+        context.coordinator.stop(oldPlayer)
+        if let resumePosition, resumePosition.isFinite, resumePosition > 0 {
+            player.seek(
+                to: CMTime(seconds: resumePosition, preferredTimescale: 600),
+                toleranceBefore: .zero,
+                toleranceAfter: .zero
+            )
+            onDebug("Resuming refreshed stream at \(Int(resumePosition))s")
+        }
+        player.play()
+    }
+
+    static func dismantleUIViewController(_ controller: AVPlayerViewController, coordinator: Coordinator) {
+        coordinator.stop(controller.player)
+        controller.player = nil
     }
 
     func makeCoordinator() -> Coordinator {
@@ -277,19 +397,23 @@ struct TVPlayerView: UIViewControllerRepresentable {
             onTapped: onTapped,
             onPlaybackPausedChanged: onPlaybackPausedChanged,
             onEnded: onEnded,
+            onPlaybackFailure: onPlaybackFailure,
             onDebug: onDebug
         )
     }
 
     final class Coordinator: NSObject {
         var lastReplayRequest = 0
+        var lastPlaybackGeneration = 0
         var onTapped: () -> Void
         var onPlaybackPausedChanged: (Bool) -> Void
+        var onPlaybackFailure: (Double?) -> Void
         private let onEnded: () -> Void
         private let onDebug: (String) -> Void
         private var statusObservation: NSKeyValueObservation?
         private var playbackObservation: NSKeyValueObservation?
         private var endObserver: NSObjectProtocol?
+        private var stallObserver: NSObjectProtocol?
         private var accessLogObserver: NSObjectProtocol?
         private weak var tapRecognizer: UITapGestureRecognizer?
 
@@ -297,11 +421,13 @@ struct TVPlayerView: UIViewControllerRepresentable {
             onTapped: @escaping () -> Void,
             onPlaybackPausedChanged: @escaping (Bool) -> Void,
             onEnded: @escaping () -> Void,
+            onPlaybackFailure: @escaping (Double?) -> Void,
             onDebug: @escaping (String) -> Void
         ) {
             self.onTapped = onTapped
             self.onPlaybackPausedChanged = onPlaybackPausedChanged
             self.onEnded = onEnded
+            self.onPlaybackFailure = onPlaybackFailure
             self.onDebug = onDebug
         }
 
@@ -312,6 +438,11 @@ struct TVPlayerView: UIViewControllerRepresentable {
             if let accessLogObserver {
                 NotificationCenter.default.removeObserver(accessLogObserver)
             }
+            if let stallObserver {
+                NotificationCenter.default.removeObserver(stallObserver)
+            }
+            statusObservation?.invalidate()
+            playbackObservation?.invalidate()
         }
 
         func installTapRecognizer(on view: UIView) {
@@ -338,7 +469,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
             )
             let item = AVPlayerItem(asset: asset)
             item.preferredPeakBitRate = 0
-            item.preferredForwardBufferDuration = 20
+            item.preferredForwardBufferDuration = streamURL.pathExtension.lowercased() == "mp4" ? 5 : 20
             if #available(tvOS 11.0, iOS 11.0, *) {
                 item.preferredMaximumResolution = CGSize(width: 3840, height: 2160)
             }
@@ -348,6 +479,11 @@ struct TVPlayerView: UIViewControllerRepresentable {
             player.automaticallyWaitsToMinimizeStalling = true
             observe(player)
             return player
+        }
+
+        func stop(_ player: AVPlayer?) {
+            player?.pause()
+            player?.replaceCurrentItem(with: nil)
         }
 
         private func referer(for streamURL: URL) -> String {
@@ -366,6 +502,9 @@ struct TVPlayerView: UIViewControllerRepresentable {
             if let endObserver {
                 NotificationCenter.default.removeObserver(endObserver)
             }
+            if let stallObserver {
+                NotificationCenter.default.removeObserver(stallObserver)
+            }
             if let accessLogObserver {
                 NotificationCenter.default.removeObserver(accessLogObserver)
             }
@@ -377,6 +516,14 @@ struct TVPlayerView: UIViewControllerRepresentable {
             ) { [weak self] _ in
                 self?.onDebug("AVPlayerItem reached end")
                 self?.onEnded()
+            }
+
+            stallObserver = NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemPlaybackStalled,
+                object: item,
+                queue: .main
+            ) { [weak self] _ in
+                self?.onDebug("AVPlayerItem playback stalled")
             }
 
             accessLogObserver = NotificationCenter.default.addObserver(
@@ -408,6 +555,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
                         if let event = item.errorLog()?.events.last {
                             self?.onDebug("Error log: \(event.errorStatusCode) \(event.errorComment ?? "")")
                         }
+                        self?.onPlaybackFailure(item.currentTime().seconds)
                     @unknown default:
                         self?.onDebug("AVPlayerItem status: unknown future status")
                     }
