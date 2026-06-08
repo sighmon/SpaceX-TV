@@ -14,6 +14,8 @@ final class BroadcastLibrary: ObservableObject {
     @Published private(set) var loadingState: LoadingState = .idle
     @Published private(set) var isLoadingMore = false
     @Published private(set) var debugLines: [String] = []
+    @Published private(set) var appDataCacheCreatedAt: Date?
+    @Published private(set) var xAPICacheGeneratedAt: Date?
     @Published var xAPIBearerToken: String {
         didSet {
             tokenStore.save(xAPIBearerToken)
@@ -43,7 +45,7 @@ final class BroadcastLibrary: ObservableObject {
     private let calendar: Calendar
     private let pageSize = 10
     private let maximumRequestedLimit = 20
-    private let cacheVersion = 20
+    private let cacheVersion = 21
     private let xAPICacheURL = URL(string: "https://www.sighmon.com/spacex-tv/x-cache.json")!
     private var cachedBroadcasts: [Broadcast] = []
     private var requestedLimit = 0
@@ -95,6 +97,8 @@ final class BroadcastLibrary: ObservableObject {
         self.cachedBroadcasts = previewBroadcasts
         self.requestedLimit = previewBroadcasts.count
         self.debugLines = debugLines
+        self.appDataCacheCreatedAt = Date(timeIntervalSince1970: 1_780_000_000)
+        self.xAPICacheGeneratedAt = Date(timeIntervalSince1970: 1_779_996_400)
         self.xAPIBearerToken = "preview-token"
         self.usesXAPIBearerToken = false
         self.showsPlayerDebugOverlay = false
@@ -114,22 +118,31 @@ final class BroadcastLibrary: ObservableObject {
         loadingState = .loading
         isLoadingMore = false
         debugLines = ["Starting refresh"]
+        appDataCacheCreatedAt = nil
+        xAPICacheGeneratedAt = nil
         do {
             let result = try await discoverRecentSpaceXBroadcasts(limit: pageSize)
+            let cacheCreatedAt = Date()
             cachedBroadcasts = result.broadcasts
             broadcasts = result.broadcasts
             requestedLimit = pageSize
             debugLines = result.report.lines
+            appDataCacheCreatedAt = cacheCreatedAt
+            xAPICacheGeneratedAt = result.report.xAPICacheGeneratedAt
             saveDailyCache(
                 broadcasts: result.broadcasts,
                 debugLines: result.report.lines,
-                requestedLimit: pageSize
+                requestedLimit: pageSize,
+                createdAt: cacheCreatedAt,
+                xAPICacheGeneratedAt: result.report.xAPICacheGeneratedAt
             )
             loadingState = .loaded
         } catch {
             cachedBroadcasts = []
             broadcasts = []
             requestedLimit = 0
+            appDataCacheCreatedAt = nil
+            xAPICacheGeneratedAt = nil
             if let failure = error as? BroadcastDiscoveryFailure {
                 debugLines = failure.report.lines
             }
@@ -152,14 +165,19 @@ final class BroadcastLibrary: ObservableObject {
 
         do {
             let result = try await discoverRecentSpaceXBroadcasts(limit: targetLimit)
+            let cacheCreatedAt = Date()
             cachedBroadcasts = result.broadcasts
             broadcasts = result.broadcasts
             requestedLimit = targetLimit
             debugLines = result.report.lines
+            appDataCacheCreatedAt = cacheCreatedAt
+            xAPICacheGeneratedAt = result.report.xAPICacheGeneratedAt
             saveDailyCache(
                 broadcasts: result.broadcasts,
                 debugLines: result.report.lines,
-                requestedLimit: targetLimit
+                requestedLimit: targetLimit,
+                createdAt: cacheCreatedAt,
+                xAPICacheGeneratedAt: result.report.xAPICacheGeneratedAt
             )
         } catch {
             if let failure = error as? BroadcastDiscoveryFailure {
@@ -198,15 +216,24 @@ final class BroadcastLibrary: ObservableObject {
         broadcasts = cache.broadcasts
         requestedLimit = cache.requestedLimit ?? minimumLimit
         debugLines = ["Loaded \(broadcasts.count) broadcasts from today's cache"] + cache.debugLines
+        appDataCacheCreatedAt = cache.createdAt
+        xAPICacheGeneratedAt = cache.xAPICacheGeneratedAt
         loadingState = .loaded
         return true
     }
 
-    private func saveDailyCache(broadcasts: [Broadcast], debugLines: [String], requestedLimit: Int) {
+    private func saveDailyCache(
+        broadcasts: [Broadcast],
+        debugLines: [String],
+        requestedLimit: Int,
+        createdAt: Date,
+        xAPICacheGeneratedAt: Date?
+    ) {
         let cache = DailyBroadcastCache(
             version: cacheVersion,
-            createdAt: Date(),
+            createdAt: createdAt,
             requestedLimit: requestedLimit,
+            xAPICacheGeneratedAt: xAPICacheGeneratedAt,
             broadcasts: broadcasts,
             debugLines: debugLines
         )
@@ -221,6 +248,8 @@ final class BroadcastLibrary: ObservableObject {
         broadcasts = []
         requestedLimit = 0
         isLoadingMore = false
+        appDataCacheCreatedAt = nil
+        xAPICacheGeneratedAt = nil
         debugLines = ["No X API Bearer Token configured"]
         loadingState = .failed(BroadcastDiscoveryError.missingBearerToken.errorDescription ?? "Add an X API Bearer Token in Settings.")
     }
@@ -238,6 +267,7 @@ private struct DailyBroadcastCache: Codable {
     var version: Int?
     var createdAt: Date
     var requestedLimit: Int?
+    var xAPICacheGeneratedAt: Date?
     var broadcasts: [Broadcast]
     var debugLines: [String]
 }

@@ -250,6 +250,7 @@ struct BroadcastDiscovery {
         }
 
         if let generatedAt = cache.generatedAt {
+            report.setXAPICacheGeneratedAt(generatedAt)
             report.add("X API cache generated at: \(ISO8601DateFormatter().string(from: generatedAt))")
         }
         report.add("X API cache source: \(cache.source ?? "unknown")")
@@ -866,10 +867,15 @@ struct BroadcastDiscoveryResult {
 
 struct DiscoveryReport: Equatable {
     private(set) var lines: [String] = []
+    private(set) var xAPICacheGeneratedAt: Date?
 
     mutating func add(_ line: String) {
         lines.append(line)
         print("[SpaceXTV] \(line)")
+    }
+
+    mutating func setXAPICacheGeneratedAt(_ date: Date?) {
+        xAPICacheGeneratedAt = date
     }
 }
 

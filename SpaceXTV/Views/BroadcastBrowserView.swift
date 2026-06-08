@@ -395,11 +395,33 @@ struct BroadcastBrowserView: View {
             Text("ONLY THE PARANOID SURVIVE")
                 .font(.title2.weight(.bold))
                 .tracking(2.4)
+                .multilineTextAlignment(.center)
                 .foregroundStyle(.white.opacity(0.58))
                 .frame(width: width, alignment: .center)
-                .padding(.top, 20)
+                .padding(.top, 10)
+
+            Text(cacheFooterText)
+                .font(.caption.weight(.semibold))
+                .tracking(0.8)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.white.opacity(0.46))
+                .frame(width: width, alignment: .center)
+                .padding(.top, 8)
         }
         .frame(width: width, alignment: .center)
+    }
+
+    private var cacheFooterText: String {
+        let xAPIDate = library.xAPICacheGeneratedAt.map(cacheDateFormatter.string(from:)) ?? "Unavailable"
+        let appDataDate = library.appDataCacheCreatedAt.map(cacheDateFormatter.string(from:)) ?? "Unavailable"
+        return "X API cache: \(xAPIDate)\nApp cache: \(appDataDate)"
+    }
+
+    private var cacheDateFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
     }
 
     private func horizontalPadding(for width: CGFloat) -> CGFloat {
