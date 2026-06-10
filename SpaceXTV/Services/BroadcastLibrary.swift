@@ -54,7 +54,7 @@ final class BroadcastLibrary: ObservableObject {
     private let pageSize = 10
     private let maximumRequestedLimit = 20
     private let cacheVersion = 25
-    private let cardCacheVersion = 1
+    private let cardCacheVersion = 2
     private let xAPICacheURL = URL(string: "https://www.sighmon.com/spacex-tv/x-cache.json")!
     private var cachedBroadcasts: [Broadcast] = []
     private var requestedLimit = 0

@@ -147,7 +147,13 @@ struct BroadcastDiscovery {
 
             if !candidate.galleryImages.isEmpty, candidate.streamURL == nil, !candidate.allowsDeferredStreamResolution {
                 report.add("Adding gallery \(index + 1): \(statusURL.lastPathComponent), images \(candidate.galleryImages.count)")
-                cardCache.record(for: candidate, streamURL: nil, thumbnailURL: candidate.thumbnailURL ?? candidate.galleryImages.first?.url, isLive: nil, contentKind: .gallery)
+                cardCache.record(
+                    for: candidate,
+                    streamURL: nil,
+                    thumbnailURL: candidate.thumbnailURL ?? candidate.galleryImages.first?.url,
+                    isLive: nil,
+                    contentKind: .gallery
+                )
                 selectedXItems.append(DiscoveredBroadcastItem(candidate: candidate, broadcast: gallery(from: candidate)))
                 continue
             }
@@ -163,7 +169,14 @@ struct BroadcastDiscovery {
                     resolvedThumbnailURL = nil
                     isLive = nil
                     report.add("Using X API media variant for \(statusURL.lastPathComponent)")
-                    cardCache.record(for: candidate, streamURL: apiStreamURL, thumbnailURL: candidate.thumbnailURL, isLive: nil, contentKind: .video)
+                    cardCache.record(
+                        for: candidate,
+                        streamURL: apiStreamURL,
+                        thumbnailURL: candidate.thumbnailURL,
+                        isLive: nil,
+                        contentKind: .video,
+                        validFor: .directMedia
+                    )
                 } else {
                     let resolved = try await resolver.resolveStatusURL(statusURL)
                     streamURL = resolved.streamURL
@@ -171,7 +184,14 @@ struct BroadcastDiscovery {
                     isLive = resolved.isLive
                     report.add("Found page stream for \(statusURL.lastPathComponent)")
                     report.add("Page thumbnail for \(statusURL.lastPathComponent): \(resolvedThumbnailURL == nil ? "missing" : "present")")
-                    cardCache.record(for: candidate, streamURL: streamURL, thumbnailURL: resolvedThumbnailURL, isLive: isLive, contentKind: .video)
+                    cardCache.record(
+                        for: candidate,
+                        streamURL: streamURL,
+                        thumbnailURL: resolvedThumbnailURL,
+                        isLive: isLive,
+                        contentKind: .video,
+                        validFor: .resolvedStream
+                    )
                 }
 
                 report.add("Found stream for \(statusURL.lastPathComponent)")
@@ -187,13 +207,26 @@ struct BroadcastDiscovery {
             } catch {
                 if candidate.allowsDeferredStreamResolution {
                     report.add("Deferring stream resolution for linked broadcast \(statusURL.lastPathComponent): \(debugMessage(for: error))")
-                    // Record under this fingerprint so we don't re-probe identical cards on every refresh.
-                    cardCache.record(for: candidate, streamURL: nil, thumbnailURL: nil, isLive: nil, contentKind: .video)
+                    cardCache.record(
+                        for: candidate,
+                        streamURL: nil,
+                        thumbnailURL: nil,
+                        isLive: nil,
+                        contentKind: .video,
+                        validFor: .failedProbe
+                    )
                     selectedXItems.append(DiscoveredBroadcastItem(candidate: candidate, broadcast: broadcast(from: candidate, streamURL: nil)))
                 } else {
                     report.add("No stream for \(statusURL.lastPathComponent): \(debugMessage(for: error))")
-                    // Cache the negative result so we don't re-probe this exact post content on future refreshes.
-                    cardCache.record(for: candidate, streamURL: nil, thumbnailURL: nil, isLive: nil, contentKind: .video, hasUsableContent: false)
+                    cardCache.record(
+                        for: candidate,
+                        streamURL: nil,
+                        thumbnailURL: nil,
+                        isLive: nil,
+                        contentKind: .video,
+                        hasUsableContent: false,
+                        validFor: .failedProbe
+                    )
                 }
             }
         }
@@ -508,18 +541,40 @@ struct BroadcastDiscovery {
         if let linked = linkedBroadcastURL {
             parts.append("lnk:\(linked.absoluteString)")
         }
-        let own = media.map { "\($0.mediaKey):\($0.type)" }.sorted()
+        let own = media.map(mediaFingerprint).sorted()
         if !own.isEmpty {
             parts.append("m:\(own.joined(separator: ","))")
         }
         if let qid = post.quotedTweetID {
             parts.append("q:\(qid)")
         }
-        let qm = quotedMedia.map { "\($0.mediaKey):\($0.type)" }.sorted()
+        let qm = quotedMedia.map(mediaFingerprint).sorted()
         if !qm.isEmpty {
             parts.append("qm:\(qm.joined(separator: ","))")
         }
         return parts.joined(separator: "|")
+    }
+
+    func mediaFingerprint(_ media: XAPIMedia) -> String {
+        let variants = (media.variants ?? [])
+            .map { variant in
+                "\(variant.url.absoluteString):\(variant.contentType ?? ""):\(variant.bitRate.map(String.init) ?? "")"
+            }
+            .sorted()
+            .joined(separator: ",")
+        let width = media.width.map(String.init) ?? ""
+        let height = media.height.map(String.init) ?? ""
+        let components: [String] = [
+            media.mediaKey,
+            media.type ?? "",
+            variants,
+            media.previewImageURL?.absoluteString ?? "",
+            media.url?.absoluteString ?? "",
+            width,
+            height,
+            media.altText ?? "",
+        ]
+        return components.joined(separator: ":")
     }
 
     private func xBroadcastID(from url: URL) -> String? {
@@ -889,7 +944,7 @@ struct BroadcastDiscovery {
     }
 }
 
-private struct BroadcastCandidate {
+struct BroadcastCandidate {
     var statusURL: URL
     var dedupeKey: String
     var streamURL: URL?
@@ -1039,17 +1094,35 @@ struct BroadcastDiscoveryFailure: LocalizedError {
 // and negative results (plain posts that contain neither). This avoids re-checking
 // the same unchanged non-broadcast/non-gallery posts on every refresh.
 struct CardResolutionCache: Codable {
-    var version: Int = 1
+    var version: Int = 2
     var entries: [String: CardResolutionEntry] = [:]
 
     struct CardResolutionEntry: Codable {
         var fingerprint: String
         var lastChecked: Date
+        var expiresAt: Date?
         var streamURL: URL?
         var thumbnailURL: URL?
         var isLive: Bool?
         var contentKind: Broadcast.ContentKind?
         var hasUsableContent: Bool = true
+    }
+
+    enum Validity {
+        case failedProbe
+        case resolvedStream
+        case directMedia
+
+        var duration: TimeInterval {
+            switch self {
+            case .failedProbe:
+                15 * 60
+            case .resolvedStream:
+                60 * 60
+            case .directMedia:
+                24 * 60 * 60
+            }
+        }
     }
 
     // Stable lookup key for a candidate. Prefer the originating X post for "this card JSON".
@@ -1067,27 +1140,37 @@ struct CardResolutionCache: Codable {
 
     /// Returns a prior successful (or safely-deferred) resolution for this candidate
     /// only if the stored fingerprint matches the candidate's current contentFingerprint.
-    fileprivate func resolution(for candidate: BroadcastCandidate) -> CardResolutionEntry? {
+    mutating func resolution(for candidate: BroadcastCandidate, now: Date = Date()) -> CardResolutionEntry? {
         guard let k = Self.key(for: candidate) else { return nil }
         guard let entry = entries[k] else { return nil }
-        guard let fp = candidate.contentFingerprint, entry.fingerprint == fp else { return nil }
+        guard let fp = candidate.contentFingerprint, entry.fingerprint == fp else {
+            entries.removeValue(forKey: k)
+            return nil
+        }
+        if let expiresAt = entry.expiresAt, expiresAt <= now {
+            entries.removeValue(forKey: k)
+            return nil
+        }
         return entry
     }
 
     /// Remember the outcome of a check/probe for this card (by post or dedupe key) under its current fingerprint.
-    fileprivate mutating func record(
+    mutating func record(
         for candidate: BroadcastCandidate,
         streamURL: URL?,
         thumbnailURL: URL?,
         isLive: Bool?,
         contentKind: Broadcast.ContentKind,
-        hasUsableContent: Bool = true
+        hasUsableContent: Bool = true,
+        validFor validity: Validity? = nil,
+        now: Date = Date()
     ) {
         guard let k = Self.key(for: candidate),
               let fp = candidate.contentFingerprint else { return }
         entries[k] = CardResolutionEntry(
             fingerprint: fp,
-            lastChecked: Date(),
+            lastChecked: now,
+            expiresAt: validity.map { now.addingTimeInterval($0.duration) },
             streamURL: streamURL,
             thumbnailURL: thumbnailURL,
             isLive: isLive,
@@ -1284,7 +1367,7 @@ private struct XAPIIncludes: Decodable {
     var tweets: [XAPIPost]?
 }
 
-private struct XAPIMedia: Decodable {
+struct XAPIMedia: Decodable {
     var mediaKey: String
     var type: String?
     var variants: [XAPIMediaVariant]?
@@ -1332,7 +1415,7 @@ private struct XAPIMedia: Decodable {
     }
 }
 
-private struct XAPIMediaVariant: Decodable {
+struct XAPIMediaVariant: Decodable {
     var bitRate: Int?
     var contentType: String?
     var url: URL

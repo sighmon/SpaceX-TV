@@ -21,7 +21,18 @@
 		0A000001000000000000000B /* Views/GalleryScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A000001000000000000001B /* Views/GalleryScreen.swift */; };
 		0A000001000000000000000C /* Models/Launch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A000001000000000000001C /* Models/Launch.swift */; };
 		0A000001000000000000000D /* Services/SpaceXLaunchScheduleService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A000001000000000000001D /* Services/SpaceXLaunchScheduleService.swift */; };
+		0B0000010000000000000001 /* CardResolutionCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B0000010000000000000011 /* CardResolutionCacheTests.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		0B0000010000000000000081 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0A0000010000000000000080 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0A0000010000000000000050;
+			remoteInfo = SpaceXTV;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		053EB0B42FC18C9400512715 /* Media.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Media.xcassets; sourceTree = "<group>"; };
@@ -39,10 +50,19 @@
 		0A000001000000000000001B /* Views/GalleryScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/GalleryScreen.swift; sourceTree = "<group>"; };
 		0A000001000000000000001C /* Models/Launch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Launch.swift; sourceTree = "<group>"; };
 		0A000001000000000000001D /* Services/SpaceXLaunchScheduleService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/SpaceXLaunchScheduleService.swift; sourceTree = "<group>"; };
+		0B0000010000000000000010 /* SpaceXTVTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SpaceXTVTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		0B0000010000000000000011 /* CardResolutionCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardResolutionCacheTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		0A0000010000000000000030 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0B0000010000000000000030 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -77,6 +97,7 @@
 			isa = PBXGroup;
 			children = (
 				0A0000010000000000000020 /* SpaceXTV */,
+				0B0000010000000000000020 /* SpaceXTVTests */,
 				0A0000010000000000000041 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -85,8 +106,17 @@
 			isa = PBXGroup;
 			children = (
 				0A0000010000000000000010 /* SpaceXTV.app */,
+				0B0000010000000000000010 /* SpaceXTVTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		0B0000010000000000000020 /* SpaceXTVTests */ = {
+			isa = PBXGroup;
+			children = (
+				0B0000010000000000000011 /* CardResolutionCacheTests.swift */,
+			);
+			path = SpaceXTVTests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -111,6 +141,26 @@
 			productReference = 0A0000010000000000000010 /* SpaceXTV.app */;
 			productType = "com.apple.product-type.application";
 		};
+		0B0000010000000000000050 /* SpaceXTVTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0B0000010000000000000060 /* Build configuration list for PBXNativeTarget "SpaceXTVTests" */;
+			buildPhases = (
+				0B0000010000000000000070 /* Sources */,
+				0B0000010000000000000030 /* Frameworks */,
+				0B0000010000000000000071 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				0B0000010000000000000082 /* PBXTargetDependency */,
+			);
+			name = SpaceXTVTests;
+			packageProductDependencies = (
+			);
+			productName = SpaceXTVTests;
+			productReference = 0B0000010000000000000010 /* SpaceXTVTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -123,6 +173,10 @@
 				TargetAttributes = {
 					0A0000010000000000000050 = {
 						CreatedOnToolsVersion = 26.3;
+					};
+					0B0000010000000000000050 = {
+						CreatedOnToolsVersion = 26.3;
+						TestTargetID = 0A0000010000000000000050;
 					};
 				};
 			};
@@ -141,6 +195,7 @@
 			projectRoot = "";
 			targets = (
 				0A0000010000000000000050 /* SpaceXTV */,
+				0B0000010000000000000050 /* SpaceXTVTests */,
 			);
 		};
 /* End PBXProject section */
@@ -151,6 +206,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				053EB0B52FC18C9400512715 /* Media.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0B0000010000000000000071 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -177,7 +239,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0B0000010000000000000070 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0B0000010000000000000001 /* CardResolutionCacheTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		0B0000010000000000000082 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0A0000010000000000000050 /* SpaceXTV */;
+			targetProxy = 0B0000010000000000000081 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		0A0000010000000000000061 /* Debug */ = {
@@ -363,6 +441,44 @@
 			};
 			name = Release;
 		};
+		0B0000010000000000000061 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 4P8S9W2NYL;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sighmon.SpaceXTVTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = appletvos;
+				SUPPORTED_PLATFORMS = "appletvos appletvsimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 3;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SpaceXTV.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/SpaceXTV";
+				TVOS_DEPLOYMENT_TARGET = 17.0;
+			};
+			name = Debug;
+		};
+		0B0000010000000000000062 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 4P8S9W2NYL;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sighmon.SpaceXTVTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = appletvos;
+				SUPPORTED_PLATFORMS = "appletvos appletvsimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 3;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SpaceXTV.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/SpaceXTV";
+				TVOS_DEPLOYMENT_TARGET = 17.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -380,6 +496,15 @@
 			buildConfigurations = (
 				0A0000010000000000000091 /* Debug */,
 				0A0000010000000000000092 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		0B0000010000000000000060 /* Build configuration list for PBXNativeTarget "SpaceXTVTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0B0000010000000000000061 /* Debug */,
+				0B0000010000000000000062 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
