@@ -35,6 +35,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		0521F01F2FD90A60008302DE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		053EB0B42FC18C9400512715 /* Media.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Media.xcassets; sourceTree = "<group>"; };
 		0A0000010000000000000010 /* SpaceXTV.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SpaceXTV.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0A0000010000000000000011 /* App/SpaceXTVApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/SpaceXTVApp.swift; sourceTree = "<group>"; };
@@ -75,6 +76,7 @@
 		0A0000010000000000000020 /* SpaceXTV */ = {
 			isa = PBXGroup;
 			children = (
+				0521F01F2FD90A60008302DE /* Info.plist */,
 				0A0000010000000000000011 /* App/SpaceXTVApp.swift */,
 				0A0000010000000000000012 /* Models/Broadcast.swift */,
 				0A000001000000000000001C /* Models/Launch.swift */,
@@ -267,10 +269,11 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 25;
+				CURRENT_PROJECT_VERSION = 26;
 				DEVELOPMENT_TEAM = 4P8S9W2NYL;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = SpaceXTV/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "SpaceX TV";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -302,10 +305,11 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 25;
+				CURRENT_PROJECT_VERSION = 26;
 				DEVELOPMENT_TEAM = 4P8S9W2NYL;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = SpaceXTV/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "SpaceX TV";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
