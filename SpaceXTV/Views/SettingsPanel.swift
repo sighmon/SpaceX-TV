@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var library: BroadcastLibrary
     @FocusState private var tokenFocused: Bool
+    @State private var showingDeleteConfirm = false
 
     private var versionText: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
@@ -79,9 +80,26 @@ struct SettingsView: View {
 
                     Toggle("Show player debug overlay", isOn: $library.showsPlayerDebugOverlay)
                         .font(.body.weight(.medium))
+
+                    Button("Delete Caches", role: .destructive) {
+                        showingDeleteConfirm = true
+                    }
+                    .font(.body.weight(.medium))
                 }
                 .padding(28)
                 .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+                .confirmationDialog(
+                    "Delete cached data?",
+                    isPresented: $showingDeleteConfirm,
+                    titleVisibility: .visible
+                ) {
+                    Button("Delete App Cache and Card Checks", role: .destructive) {
+                        library.clearCaches()
+                    }
+                    Button("Cancel", role: .cancel) { }
+                } message: {
+                    Text("Clears the daily broadcast cache and the per-card check results that speed up refreshes and daily updates. On-screen content remains until you refresh.")
+                }
 
                 VStack(spacing: 18) {
                     Text("Made on Earth by humans")

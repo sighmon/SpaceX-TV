@@ -16,6 +16,8 @@ final class BroadcastLibrary: ObservableObject {
     @Published private(set) var debugLines: [String] = []
     @Published private(set) var appDataCacheCreatedAt: Date?
     @Published private(set) var xAPICacheGeneratedAt: Date?
+    @Published private(set) var cardCheckHits: Int = 0
+    @Published private(set) var cardCheckMisses: Int = 0
     @Published var xAPIBearerToken: String {
         didSet {
             tokenStore.save(xAPIBearerToken)
@@ -51,10 +53,12 @@ final class BroadcastLibrary: ObservableObject {
     private let calendar: Calendar
     private let pageSize = 10
     private let maximumRequestedLimit = 20
-    private let cacheVersion = 24
+    private let cacheVersion = 25
+    private let cardCacheVersion = 2
     private let xAPICacheURL = URL(string: "https://www.sighmon.com/spacex-tv/x-cache.json")!
     private var cachedBroadcasts: [Broadcast] = []
     private var requestedLimit = 0
+    private var cardResolutionCache = CardResolutionCache()
 
     var hasXAPIBearerToken: Bool {
         !xAPIBearerToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -89,6 +93,12 @@ final class BroadcastLibrary: ObservableObject {
         self.showsPlayerDebugOverlay = defaults.bool(forKey: Keys.showsPlayerDebugOverlay)
         self.showsNextLaunchCountdown = defaults.object(forKey: Keys.showsNextLaunchCountdown) as? Bool ?? true
         self.prefersMP4Playback = defaults.object(forKey: Keys.prefersMP4Playback) as? Bool ?? false
+
+        if let data = defaults.data(forKey: Keys.cardResolutionCache),
+           let decoded = try? JSONDecoder().decode(CardResolutionCache.self, from: data),
+           decoded.version == cardCacheVersion {
+            cardResolutionCache = decoded
+        }
     }
 
 #if DEBUG
@@ -106,11 +116,14 @@ final class BroadcastLibrary: ObservableObject {
         self.debugLines = debugLines
         self.appDataCacheCreatedAt = Date(timeIntervalSince1970: 1_780_000_000)
         self.xAPICacheGeneratedAt = Date(timeIntervalSince1970: 1_779_996_400)
+        self.cardCheckHits = 0
+        self.cardCheckMisses = 0
         self.xAPIBearerToken = "preview-token"
         self.usesXAPIBearerToken = false
         self.showsPlayerDebugOverlay = false
         self.showsNextLaunchCountdown = true
         self.prefersMP4Playback = false
+        self.cardResolutionCache = CardResolutionCache()
         self.loadingState = .loaded
     }
 #endif
@@ -128,6 +141,8 @@ final class BroadcastLibrary: ObservableObject {
         debugLines = ["Starting refresh"]
         appDataCacheCreatedAt = nil
         xAPICacheGeneratedAt = nil
+        cardCheckHits = 0
+        cardCheckMisses = 0
         do {
             let result = try await discoverRecentSpaceXBroadcasts(limit: pageSize)
             let cacheCreatedAt = Date()
@@ -137,13 +152,18 @@ final class BroadcastLibrary: ObservableObject {
             debugLines = result.report.lines
             appDataCacheCreatedAt = cacheCreatedAt
             xAPICacheGeneratedAt = result.report.xAPICacheGeneratedAt
+            cardCheckHits = result.report.cardCheckHits
+            cardCheckMisses = result.report.cardCheckMisses
             saveDailyCache(
                 broadcasts: result.broadcasts,
                 debugLines: result.report.lines,
                 requestedLimit: pageSize,
                 createdAt: cacheCreatedAt,
-                xAPICacheGeneratedAt: result.report.xAPICacheGeneratedAt
+                xAPICacheGeneratedAt: result.report.xAPICacheGeneratedAt,
+                cardCheckHits: result.report.cardCheckHits,
+                cardCheckMisses: result.report.cardCheckMisses
             )
+            saveCardResolutionCache()
             loadingState = .loaded
         } catch {
             cachedBroadcasts = []
@@ -151,6 +171,8 @@ final class BroadcastLibrary: ObservableObject {
             requestedLimit = 0
             appDataCacheCreatedAt = nil
             xAPICacheGeneratedAt = nil
+            cardCheckHits = 0
+            cardCheckMisses = 0
             if let failure = error as? BroadcastDiscoveryFailure {
                 debugLines = failure.report.lines
             }
@@ -180,13 +202,18 @@ final class BroadcastLibrary: ObservableObject {
             debugLines = result.report.lines
             appDataCacheCreatedAt = cacheCreatedAt
             xAPICacheGeneratedAt = result.report.xAPICacheGeneratedAt
+            cardCheckHits = result.report.cardCheckHits
+            cardCheckMisses = result.report.cardCheckMisses
             saveDailyCache(
                 broadcasts: result.broadcasts,
                 debugLines: result.report.lines,
                 requestedLimit: targetLimit,
                 createdAt: cacheCreatedAt,
-                xAPICacheGeneratedAt: result.report.xAPICacheGeneratedAt
+                xAPICacheGeneratedAt: result.report.xAPICacheGeneratedAt,
+                cardCheckHits: result.report.cardCheckHits,
+                cardCheckMisses: result.report.cardCheckMisses
             )
+            saveCardResolutionCache()
         } catch {
             if let failure = error as? BroadcastDiscoveryFailure {
                 debugLines = failure.report.lines
@@ -198,19 +225,28 @@ final class BroadcastLibrary: ObservableObject {
 
     private func discoverRecentSpaceXBroadcasts(limit: Int) async throws -> BroadcastDiscoveryResult {
         let token = xAPIBearerToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Copy the cache value so we can pass it inout across the async boundary without
+        // violating actor isolation on the stored property. Write it back after the call
+        // returns (the callee mutates the local copy during probing).
+        var cache = cardResolutionCache
+        let result: BroadcastDiscoveryResult
         if usesXAPIBearerToken, !token.isEmpty {
-            return try await discovery.discoverRecentSpaceXBroadcasts(
+            result = try await discovery.discoverRecentSpaceXBroadcasts(
                 limit: limit,
                 xAPIBearerToken: token,
-                prefersMP4Playback: prefersMP4Playback
+                prefersMP4Playback: prefersMP4Playback,
+                cardCache: &cache
+            )
+        } else {
+            result = try await discovery.discoverRecentSpaceXBroadcasts(
+                limit: limit,
+                xAPICacheURL: xAPICacheURL,
+                prefersMP4Playback: prefersMP4Playback,
+                cardCache: &cache
             )
         }
-
-        return try await discovery.discoverRecentSpaceXBroadcasts(
-            limit: limit,
-            xAPICacheURL: xAPICacheURL,
-            prefersMP4Playback: prefersMP4Playback
-        )
+        cardResolutionCache = cache
+        return result
     }
 
     private func restoreDailyCache(minimumLimit: Int) -> Bool {
@@ -228,6 +264,8 @@ final class BroadcastLibrary: ObservableObject {
         debugLines = ["Loaded \(broadcasts.count) broadcasts from today's cache"] + cache.debugLines
         appDataCacheCreatedAt = cache.createdAt
         xAPICacheGeneratedAt = cache.xAPICacheGeneratedAt
+        cardCheckHits = cache.cardCheckHits
+        cardCheckMisses = cache.cardCheckMisses
         loadingState = .loaded
         return true
     }
@@ -237,13 +275,17 @@ final class BroadcastLibrary: ObservableObject {
         debugLines: [String],
         requestedLimit: Int,
         createdAt: Date,
-        xAPICacheGeneratedAt: Date?
+        xAPICacheGeneratedAt: Date?,
+        cardCheckHits: Int,
+        cardCheckMisses: Int
     ) {
         let cache = DailyBroadcastCache(
             version: cacheVersion,
             createdAt: createdAt,
             requestedLimit: requestedLimit,
             xAPICacheGeneratedAt: xAPICacheGeneratedAt,
+            cardCheckHits: cardCheckHits,
+            cardCheckMisses: cardCheckMisses,
             broadcasts: broadcasts,
             debugLines: debugLines
         )
@@ -251,6 +293,29 @@ final class BroadcastLibrary: ObservableObject {
         if let data = try? JSONEncoder().encode(cache) {
             defaults.set(data, forKey: Keys.dailyCache)
         }
+    }
+
+    private func saveCardResolutionCache() {
+        var cache = cardResolutionCache
+        cache.version = cardCacheVersion
+        if let data = try? JSONEncoder().encode(cache) {
+            defaults.set(data, forKey: Keys.cardResolutionCache)
+        }
+    }
+
+    func clearCaches() {
+        // Clear the per-card resolution cache (the one that lets us skip re-checks for unchanged posts)
+        cardResolutionCache = CardResolutionCache()
+        defaults.removeObject(forKey: Keys.cardResolutionCache)
+
+        // Clear the daily full result cache
+        defaults.removeObject(forKey: Keys.dailyCache)
+
+        // Reset published snapshot state so UI (footer, etc.) reflects cleared state
+        appDataCacheCreatedAt = nil
+        xAPICacheGeneratedAt = nil
+        cardCheckHits = 0
+        cardCheckMisses = 0
     }
 
     private func showMissingTokenState() {
@@ -272,6 +337,7 @@ private enum Keys {
     static let showsNextLaunchCountdown = "showsNextLaunchCountdown"
     static let prefersMP4Playback = "prefersMP4Playback"
     static let dailyCache = "dailyBroadcastCache"
+    static let cardResolutionCache = "cardResolutionCache"
 }
 
 private struct DailyBroadcastCache: Codable {
@@ -279,6 +345,8 @@ private struct DailyBroadcastCache: Codable {
     var createdAt: Date
     var requestedLimit: Int?
     var xAPICacheGeneratedAt: Date?
+    var cardCheckHits: Int = 0
+    var cardCheckMisses: Int = 0
     var broadcasts: [Broadcast]
     var debugLines: [String]
 }

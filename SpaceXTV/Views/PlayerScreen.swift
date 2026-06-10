@@ -351,6 +351,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
         host.onFullScreenDismissed = onFullScreenDismissed
         let controller = host.playerController
         context.coordinator.lastPlaybackGeneration = playbackGeneration
+        context.coordinator.configureAudioSession()
         controller.player = context.coordinator.makePlayer(for: streamURL, title: title)
         controller.showsPlaybackControls = true
         controller.videoGravity = .resizeAspect
@@ -694,6 +695,19 @@ struct TVPlayerView: UIViewControllerRepresentable {
             player.automaticallyWaitsToMinimizeStalling = true
             observe(player)
             return player
+        }
+
+        func configureAudioSession() {
+#if !os(tvOS)
+            do {
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.playback, mode: .moviePlayback)
+                try session.setActive(true)
+                onDebug("Audio session configured for Picture in Picture")
+            } catch {
+                onDebug("Audio session setup failed: \(error.localizedDescription)")
+            }
+#endif
         }
 
         func stop(_ player: AVPlayer?) {

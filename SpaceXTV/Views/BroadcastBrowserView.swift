@@ -414,7 +414,7 @@ struct BroadcastBrowserView: View {
     private var cacheFooterText: String {
         let xAPIDate = library.xAPICacheGeneratedAt.map(cacheDateFormatter.string(from:)) ?? "Unavailable"
         let appDataDate = library.appDataCacheCreatedAt.map(cacheDateFormatter.string(from:)) ?? "Unavailable"
-        return "X API cache: \(xAPIDate)\nApp cache: \(appDataDate)"
+        return "X API cache: \(xAPIDate)\nApp cache: \(appDataDate)\nCard checks: \(library.cardCheckHits) hits, \(library.cardCheckMisses) misses"
     }
 
     private var cacheDateFormatter: DateFormatter {
