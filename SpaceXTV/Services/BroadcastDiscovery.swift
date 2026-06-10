@@ -122,6 +122,11 @@ struct BroadcastDiscovery {
             // reuse the prior classification / resolution and skip network work.
             if let cached = cardCache.resolution(for: candidate) {
                 report.add("Using cached card check for \(statusURL.lastPathComponent)")
+                report.recordCardCheckHit()
+                if !cached.hasUsableContent {
+                    // We previously probed this post and it contained neither a broadcast nor a gallery.
+                    continue
+                }
                 if cached.contentKind == .gallery {
                     selectedXItems.append(DiscoveredBroadcastItem(candidate: candidate, broadcast: gallery(from: candidate)))
                 } else {
@@ -137,6 +142,8 @@ struct BroadcastDiscovery {
                 }
                 continue
             }
+
+            report.recordCardCheckMiss()
 
             if !candidate.galleryImages.isEmpty, candidate.streamURL == nil, !candidate.allowsDeferredStreamResolution {
                 report.add("Adding gallery \(index + 1): \(statusURL.lastPathComponent), images \(candidate.galleryImages.count)")
@@ -185,9 +192,13 @@ struct BroadcastDiscovery {
                     selectedXItems.append(DiscoveredBroadcastItem(candidate: candidate, broadcast: broadcast(from: candidate, streamURL: nil)))
                 } else {
                     report.add("No stream for \(statusURL.lastPathComponent): \(debugMessage(for: error))")
+                    // Cache the negative result so we don't re-probe this exact post content on future refreshes.
+                    cardCache.record(for: candidate, streamURL: nil, thumbnailURL: nil, isLive: nil, contentKind: .video, hasUsableContent: false)
                 }
             }
         }
+
+        report.addCardCheckSummaryIfNeeded()
 
         let selectedStarshipItems = (
             appendedStarshipFilmCandidates.sortedByPublishedDateDescending()
@@ -981,6 +992,9 @@ struct DiscoveryReport: Equatable {
     private(set) var lines: [String] = []
     private(set) var xAPICacheGeneratedAt: Date?
 
+    private(set) var cardCheckHits: Int = 0
+    private(set) var cardCheckMisses: Int = 0
+
     mutating func add(_ line: String) {
         lines.append(line)
         print("[SpaceXTV] \(line)")
@@ -988,6 +1002,21 @@ struct DiscoveryReport: Equatable {
 
     mutating func setXAPICacheGeneratedAt(_ date: Date?) {
         xAPICacheGeneratedAt = date
+    }
+
+    mutating func recordCardCheckHit() {
+        cardCheckHits += 1
+    }
+
+    mutating func recordCardCheckMiss() {
+        cardCheckMisses += 1
+    }
+
+    mutating func addCardCheckSummaryIfNeeded() {
+        let total = cardCheckHits + cardCheckMisses
+        if total > 0 {
+            add("Card checks: \(cardCheckHits) hits, \(cardCheckMisses) misses")
+        }
     }
 }
 
@@ -1005,6 +1034,10 @@ struct BroadcastDiscoveryFailure: LocalizedError {
 // for cards whose originating post content fingerprint changed. This makes subsequent
 // daily updates and manual refreshes much faster: we only pay the network cost for truly
 // new or edited cards.
+//
+// We cache both positive results (broadcasts and galleries, including deferred ones)
+// and negative results (plain posts that contain neither). This avoids re-checking
+// the same unchanged non-broadcast/non-gallery posts on every refresh.
 struct CardResolutionCache: Codable {
     var version: Int = 1
     var entries: [String: CardResolutionEntry] = [:]
@@ -1016,6 +1049,7 @@ struct CardResolutionCache: Codable {
         var thumbnailURL: URL?
         var isLive: Bool?
         var contentKind: Broadcast.ContentKind?
+        var hasUsableContent: Bool = true
     }
 
     // Stable lookup key for a candidate. Prefer the originating X post for "this card JSON".
@@ -1046,7 +1080,8 @@ struct CardResolutionCache: Codable {
         streamURL: URL?,
         thumbnailURL: URL?,
         isLive: Bool?,
-        contentKind: Broadcast.ContentKind
+        contentKind: Broadcast.ContentKind,
+        hasUsableContent: Bool = true
     ) {
         guard let k = Self.key(for: candidate),
               let fp = candidate.contentFingerprint else { return }
@@ -1056,7 +1091,8 @@ struct CardResolutionCache: Codable {
             streamURL: streamURL,
             thumbnailURL: thumbnailURL,
             isLive: isLive,
-            contentKind: contentKind
+            contentKind: contentKind,
+            hasUsableContent: hasUsableContent
         )
         pruneIfNeeded()
     }
