@@ -116,6 +116,47 @@ final class CardResolutionCacheTests: XCTestCase {
         XCTAssertNil(cache.resolution(for: original, now: checkedAt))
     }
 
+    func testHostedCardChecksMergeWithoutReplacingNewerDeviceResults() {
+        let candidate = makeCandidate(fingerprint: "unchanged")
+        var deviceCache = CardResolutionCache()
+        deviceCache.record(
+            for: candidate,
+            streamURL: URL(string: "https://video.pscp.tv/device.m3u8")!,
+            thumbnailURL: nil,
+            isLive: false,
+            contentKind: .video,
+            validFor: .resolvedStream,
+            now: checkedAt
+        )
+
+        var hostedCache = CardResolutionCache()
+        hostedCache.record(
+            for: candidate,
+            streamURL: URL(string: "https://video.pscp.tv/hosted.m3u8")!,
+            thumbnailURL: nil,
+            isLive: false,
+            contentKind: .video,
+            validFor: .resolvedStream,
+            now: checkedAt.addingTimeInterval(-60)
+        )
+
+        XCTAssertEqual(deviceCache.merge(hostedCache), 0)
+        XCTAssertEqual(deviceCache.resolution(for: candidate, now: checkedAt)?.streamURL?.absoluteString, "https://video.pscp.tv/device.m3u8")
+
+        hostedCache.record(
+            for: candidate,
+            streamURL: URL(string: "https://video.pscp.tv/new-hosted.m3u8")!,
+            thumbnailURL: nil,
+            isLive: false,
+            contentKind: .video,
+            validFor: .resolvedStream,
+            now: checkedAt.addingTimeInterval(60)
+        )
+
+        XCTAssertEqual(deviceCache.merge(hostedCache), 1)
+        XCTAssertEqual(deviceCache.resolution(for: candidate, now: checkedAt)?.streamURL?.absoluteString, "https://video.pscp.tv/new-hosted.m3u8")
+    }
+
     func testMediaFingerprintChangesWhenVariantChanges() {
         let discovery = BroadcastDiscovery()
         let first = makeMedia(variantURL: "https://video.twimg.com/variant-a.mp4", bitRate: 832_000)

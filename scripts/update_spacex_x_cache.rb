@@ -5,6 +5,7 @@ require "json"
 require "net/http"
 require "time"
 require "uri"
+require_relative "spacex_x_card_processor"
 
 TOKEN = ENV["X_BEARER_TOKEN"]
 OUTPUT_PATH = File.expand_path(
@@ -53,12 +54,27 @@ begin
     get_json("https://api.x.com/2/tweets?ids=#{pinned_tweet_id}&#{COMMON_POST_QUERY}")
   end
 
+  existing_cache = if File.file?(OUTPUT_PATH)
+    begin
+      JSON.parse(File.read(OUTPUT_PATH))
+    rescue JSON::ParserError => error
+      log "Could not reuse existing processed cards: #{error.message}"
+      nil
+    end
+  end
+  processed_cards = SpaceXXCardProcessor.new(
+    existing_cache: existing_cache,
+    logger: ->(message) { log message }
+  ).process(pinned, timeline)
+  log "Processed #{processed_cards.fetch("entries").count} broadcast/gallery cards"
+
   payload = {
     generated_at: Time.now.utc.iso8601,
-    source: "x-api-cache-v1",
+    source: "x-api-cache-v2",
     user: user,
     pinned: pinned,
-    timeline: timeline
+    timeline: timeline,
+    processed_cards: processed_cards
   }
 
   FileUtils.mkdir_p(File.dirname(OUTPUT_PATH))

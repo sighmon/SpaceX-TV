@@ -71,6 +71,7 @@ struct BroadcastDiscovery {
         let candidates = try await recentSpaceXBroadcastCandidatesFromCache(
             cacheURL: xAPICacheURL,
             timelineLimit: timelineLimit,
+            cardCache: &cardCache,
             report: &report
         )
         report.add("Candidate statuses: \(candidates.count)")
@@ -325,7 +326,12 @@ struct BroadcastDiscovery {
         return recentSpaceXBroadcastCandidates(pinnedTimeline: pinnedTimeline, timeline: timeline, report: &report)
     }
 
-    private func recentSpaceXBroadcastCandidatesFromCache(cacheURL: URL, timelineLimit: Int, report: inout DiscoveryReport) async throws -> [BroadcastCandidate] {
+    private func recentSpaceXBroadcastCandidatesFromCache(
+        cacheURL: URL,
+        timelineLimit: Int,
+        cardCache: inout CardResolutionCache,
+        report: inout DiscoveryReport
+    ) async throws -> [BroadcastCandidate] {
         report.add("Using X API cache for timeline discovery")
         report.add("X API cache GET: \(cacheURL.absoluteString)")
         var request = URLRequest(url: cacheURL)
@@ -353,6 +359,11 @@ struct BroadcastDiscovery {
             report.add("X API cache generated at: \(ISO8601DateFormatter().string(from: generatedAt))")
         }
         report.add("X API cache source: \(cache.source ?? "unknown")")
+        if let processedCards = cache.processedCards,
+           processedCards.version == cardCache.version {
+            let mergedCount = cardCache.merge(processedCards)
+            report.add("X API cache supplied \(processedCards.entries.count) processed card checks; merged \(mergedCount)")
+        }
 
         let pinnedTimeline = cache.pinned.map(xAPITimeline(from:))
         let timeline = xAPITimeline(from: cache.timeline)
@@ -1097,6 +1108,19 @@ struct CardResolutionCache: Codable {
     var version: Int = 2
     var entries: [String: CardResolutionEntry] = [:]
 
+    mutating func merge(_ incoming: CardResolutionCache) -> Int {
+        var mergedCount = 0
+        for (key, entry) in incoming.entries {
+            if let existing = entries[key], existing.lastChecked >= entry.lastChecked {
+                continue
+            }
+            entries[key] = entry
+            mergedCount += 1
+        }
+        pruneIfNeeded()
+        return mergedCount
+    }
+
     struct CardResolutionEntry: Codable {
         var fingerprint: String
         var lastChecked: Date
@@ -1219,6 +1243,7 @@ private struct XAPICacheResponse: Decodable {
     var user: XAPIUserResponse
     var pinned: XAPIPostsResponse?
     var timeline: XAPIPostsResponse
+    var processedCards: CardResolutionCache?
 
     enum CodingKeys: String, CodingKey {
         case generatedAt = "generated_at"
@@ -1226,6 +1251,7 @@ private struct XAPICacheResponse: Decodable {
         case user
         case pinned
         case timeline
+        case processedCards = "processed_cards"
     }
 }
 
