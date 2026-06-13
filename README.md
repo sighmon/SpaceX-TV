@@ -50,7 +50,7 @@ For simulator testing, the easiest token entry path is usually paste through the
 
 ## Hosted X API Cache
 
-The fallback cache is intended for shared hosting where Ruby and cron are available without extra packages. The script reads the X API Bearer Token from `X_BEARER_TOKEN` and writes JSON to `~/www.sighmon.com/spacex-tv/x-cache.json`.
+The fallback cache is intended for shared hosting where Ruby and cron are available without extra packages. The script reads the X API Bearer Token from `X_BEARER_TOKEN`, fetches the latest 25 SpaceX posts, and writes JSON to `~/www.sighmon.com/spacex-tv/x-cache.json`.
 
 Install the scripts somewhere outside the web root, for example:
 

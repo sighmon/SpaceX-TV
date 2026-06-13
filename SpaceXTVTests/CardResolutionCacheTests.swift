@@ -32,14 +32,50 @@ final class CardResolutionCacheTests: XCTestCase {
             for: candidate,
             streamURL: streamURL,
             thumbnailURL: nil,
-            isLive: true,
+            isLive: false,
             contentKind: .video,
             validFor: .resolvedStream,
             now: checkedAt
         )
 
-        XCTAssertEqual(cache.resolution(for: candidate, now: checkedAt.addingTimeInterval(3_599))?.streamURL, streamURL)
-        XCTAssertNil(cache.resolution(for: candidate, now: checkedAt.addingTimeInterval(3_600)))
+        XCTAssertEqual(cache.resolution(for: candidate, now: checkedAt.addingTimeInterval(604_799))?.streamURL, streamURL)
+        XCTAssertNil(cache.resolution(for: candidate, now: checkedAt.addingTimeInterval(604_800)))
+    }
+
+    func testLiveStreamExpiresQuickly() {
+        var cache = CardResolutionCache()
+        let candidate = makeCandidate(fingerprint: "unchanged")
+
+        cache.record(
+            for: candidate,
+            streamURL: URL(string: "https://video.pscp.tv/live.m3u8")!,
+            thumbnailURL: nil,
+            isLive: true,
+            contentKind: .video,
+            validFor: .liveStream,
+            now: checkedAt
+        )
+
+        XCTAssertNotNil(cache.resolution(for: candidate, now: checkedAt.addingTimeInterval(899)))
+        XCTAssertNil(cache.resolution(for: candidate, now: checkedAt.addingTimeInterval(900)))
+    }
+
+    func testDirectMediaRemainsCachedForSevenDays() {
+        var cache = CardResolutionCache()
+        let candidate = makeCandidate(fingerprint: "unchanged")
+
+        cache.record(
+            for: candidate,
+            streamURL: URL(string: "https://video.twimg.com/replay.mp4")!,
+            thumbnailURL: nil,
+            isLive: nil,
+            contentKind: .video,
+            validFor: .directMedia,
+            now: checkedAt
+        )
+
+        XCTAssertNotNil(cache.resolution(for: candidate, now: checkedAt.addingTimeInterval(604_799)))
+        XCTAssertNil(cache.resolution(for: candidate, now: checkedAt.addingTimeInterval(604_800)))
     }
 
     func testGalleryRemainsCachedWithoutExpiry() {
@@ -86,6 +122,25 @@ final class CardResolutionCacheTests: XCTestCase {
         let updated = makeMedia(variantURL: "https://video.twimg.com/variant-b.mp4", bitRate: 2_176_000)
 
         XCTAssertNotEqual(discovery.mediaFingerprint(first), discovery.mediaFingerprint(updated))
+    }
+
+    @MainActor
+    func testLoadMoreRequiresBearerTokenMode() {
+        let broadcast = Broadcast(
+            title: "Cached broadcast",
+            subtitle: "X status",
+            sourceURL: URL(string: "https://x.com/spacex/status/123")!,
+            sourceKind: .xBroadcast,
+            artworkName: "play.rectangle"
+        )
+        let library = BroadcastLibrary(previewBroadcasts: [broadcast])
+
+        XCTAssertFalse(library.usesXAPIBearerToken)
+        XCTAssertFalse(library.canLoadMore)
+
+        library.usesXAPIBearerToken = true
+
+        XCTAssertTrue(library.canLoadMore)
     }
 
     private func makeCandidate(fingerprint: String) -> BroadcastCandidate {

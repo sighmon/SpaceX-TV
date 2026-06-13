@@ -190,7 +190,7 @@ struct BroadcastDiscovery {
                         thumbnailURL: resolvedThumbnailURL,
                         isLive: isLive,
                         contentKind: .video,
-                        validFor: .resolvedStream
+                        validFor: isLive == true ? .liveStream : .resolvedStream
                     )
                 }
 
@@ -1110,6 +1110,7 @@ struct CardResolutionCache: Codable {
 
     enum Validity {
         case failedProbe
+        case liveStream
         case resolvedStream
         case directMedia
 
@@ -1117,10 +1118,12 @@ struct CardResolutionCache: Codable {
             switch self {
             case .failedProbe:
                 15 * 60
+            case .liveStream:
+                15 * 60
             case .resolvedStream:
-                60 * 60
+                7 * 24 * 60 * 60
             case .directMedia:
-                24 * 60 * 60
+                7 * 24 * 60 * 60
             }
         }
     }
