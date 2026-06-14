@@ -266,6 +266,7 @@ struct BroadcastDiscovery {
             sourceURL: candidate.statusURL,
             sourceKind: candidate.sourceKind,
             streamURL: streamURL,
+            fallbackStreamURL: candidate.fallbackStreamURL,
             tweetText: candidate.tweetText,
             publishedAt: candidate.publishedAt,
             thumbnailURL: thumbnailURL ?? candidate.thumbnailURL,
@@ -649,11 +650,12 @@ struct BroadcastDiscovery {
         let playlist = try spaceXCMSDecoder().decode(SpaceXMediaPlaylist.self, from: data)
 
         return playlist.media.compactMap { media in
-            guard let streamURL = media.bestStreamURL(prefersMP4Playback: prefersMP4Playback) else { return nil }
+            guard let playbackURLs = media.playbackURLs(prefersMP4Playback: prefersMP4Playback) else { return nil }
             return BroadcastCandidate(
-                statusURL: streamURL,
-                dedupeKey: "spacex-media:\(media.documentID ?? media.link ?? streamURL.absoluteString)",
+                statusURL: playbackURLs.primary,
+                dedupeKey: "spacex-media:\(media.documentID ?? media.link ?? playbackURLs.primary.absoluteString)",
                 streamURL: nil,
+                fallbackStreamURL: playbackURLs.fallback,
                 title: media.title,
                 subtitle: media.bestSubtitle,
                 tweetText: media.bestDescription,
@@ -675,11 +677,12 @@ struct BroadcastDiscovery {
         let playlist = try spaceXCMSDecoder().decode(SpaceXMediaPlaylist.self, from: data)
 
         let playlistCandidates: [BroadcastCandidate] = playlist.media.compactMap { media in
-            guard let streamURL = media.bestStarshipFlightTestURL(prefersMP4Playback: prefersMP4Playback) else { return nil }
+            guard let playbackURLs = media.playbackURLs(prefersMP4Playback: prefersMP4Playback) else { return nil }
             return BroadcastCandidate(
-                statusURL: streamURL,
-                dedupeKey: "spacex-starship-flight-test:\(media.starshipFlightTestKey ?? media.documentID ?? media.link ?? streamURL.absoluteString)",
+                statusURL: playbackURLs.primary,
+                dedupeKey: "spacex-starship-flight-test:\(media.starshipFlightTestKey ?? media.documentID ?? media.link ?? playbackURLs.primary.absoluteString)",
                 streamURL: nil,
+                fallbackStreamURL: playbackURLs.fallback,
                 title: media.title,
                 subtitle: media.bestStarshipFlightTestSubtitle,
                 tweetText: media.bestDescription,
@@ -959,6 +962,7 @@ struct BroadcastCandidate {
     var statusURL: URL
     var dedupeKey: String
     var streamURL: URL?
+    var fallbackStreamURL: URL?
     var title: String = "SpaceX Broadcast"
     var subtitle: String
     var tweetText: String? = nil
@@ -979,6 +983,7 @@ struct BroadcastCandidate {
         statusURL: URL,
         dedupeKey: String? = nil,
         streamURL: URL?,
+        fallbackStreamURL: URL? = nil,
         title: String = "SpaceX Broadcast",
         subtitle: String,
         tweetText: String? = nil,
@@ -1000,6 +1005,7 @@ struct BroadcastCandidate {
             self.dedupeKey = "status:\(statusURL.absoluteString)"
         }
         self.streamURL = streamURL
+        self.fallbackStreamURL = fallbackStreamURL
         self.title = title
         self.subtitle = subtitle
         self.tweetText = tweetText
@@ -1496,6 +1502,18 @@ private struct SpaceXMediaPlaylist: Decodable {
     var media: [SpaceXMediaItem]
 }
 
+struct SpaceXPlaybackURLs: Equatable {
+    var primary: URL
+    var fallback: URL?
+
+    init?(mp4: URL?, hls: URL?, prefersMP4Playback: Bool) {
+        guard let primary = prefersMP4Playback ? (mp4 ?? hls) : (hls ?? mp4) else { return nil }
+        self.primary = primary
+        let alternate = prefersMP4Playback ? hls : mp4
+        fallback = alternate == primary ? nil : alternate
+    }
+}
+
 private struct SpaceXMediaItem: Decodable {
     var documentID: String?
     var title: String
@@ -1512,22 +1530,10 @@ private struct SpaceXMediaItem: Decodable {
     var autoStreamingLink: URL?
     var poster: SpaceXMediaPoster?
 
-    var bestStreamURL: URL? {
-        autoStreamingLink ?? fhdStreamingLink ?? hdStreamingLink ?? uhdStreamingLink ?? fhdLink ?? hdLink ?? uhdLink
-    }
-
-    func bestStreamURL(prefersMP4Playback: Bool) -> URL? {
-        if prefersMP4Playback {
-            return uhdLink ?? fhdLink ?? hdLink ?? autoStreamingLink ?? uhdStreamingLink ?? fhdStreamingLink ?? hdStreamingLink
-        }
-        return bestStreamURL
-    }
-
-    func bestStarshipFlightTestURL(prefersMP4Playback: Bool) -> URL? {
-        if prefersMP4Playback {
-            return uhdLink ?? fhdLink ?? hdLink ?? autoStreamingLink ?? uhdStreamingLink ?? fhdStreamingLink ?? hdStreamingLink
-        }
-        return bestStreamURL
+    func playbackURLs(prefersMP4Playback: Bool) -> SpaceXPlaybackURLs? {
+        let mp4 = fhdLink ?? hdLink ?? uhdLink
+        let hls = autoStreamingLink ?? fhdStreamingLink ?? hdStreamingLink ?? uhdStreamingLink
+        return SpaceXPlaybackURLs(mp4: mp4, hls: hls, prefersMP4Playback: prefersMP4Playback)
     }
 
     var bestSubtitle: String {

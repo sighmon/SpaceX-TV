@@ -165,6 +165,26 @@ final class CardResolutionCacheTests: XCTestCase {
         XCTAssertNotEqual(discovery.mediaFingerprint(first), discovery.mediaFingerprint(updated))
     }
 
+    func testSpaceXPlaybackPrefersMP4WithHLSFallback() {
+        let mp4 = URL(string: "https://content.spacex.com/video.mp4")!
+        let hls = URL(string: "https://content.spacex.com/video.m3u8")!
+
+        let selection = SpaceXPlaybackURLs(mp4: mp4, hls: hls, prefersMP4Playback: true)
+
+        XCTAssertEqual(selection?.primary, mp4)
+        XCTAssertEqual(selection?.fallback, hls)
+    }
+
+    func testSpaceXPlaybackPrefersHLSWithMP4Fallback() {
+        let mp4 = URL(string: "https://content.spacex.com/video.mp4")!
+        let hls = URL(string: "https://content.spacex.com/video.m3u8")!
+
+        let selection = SpaceXPlaybackURLs(mp4: mp4, hls: hls, prefersMP4Playback: false)
+
+        XCTAssertEqual(selection?.primary, hls)
+        XCTAssertEqual(selection?.fallback, mp4)
+    }
+
     @MainActor
     func testLoadMoreRequiresBearerTokenMode() {
         let broadcast = Broadcast(

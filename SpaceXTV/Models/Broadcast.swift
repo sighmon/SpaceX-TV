@@ -18,6 +18,7 @@ struct Broadcast: Identifiable, Hashable, Codable {
     var sourceKind: SourceKind
     var contentKind: ContentKind
     var streamURL: URL?
+    var fallbackStreamURL: URL?
     var tweetText: String?
     var publishedAt: Date?
     var thumbnailURL: URL?
@@ -34,6 +35,7 @@ struct Broadcast: Identifiable, Hashable, Codable {
         sourceKind: SourceKind,
         contentKind: ContentKind = .video,
         streamURL: URL? = nil,
+        fallbackStreamURL: URL? = nil,
         tweetText: String? = nil,
         publishedAt: Date? = nil,
         thumbnailURL: URL? = nil,
@@ -49,6 +51,7 @@ struct Broadcast: Identifiable, Hashable, Codable {
         self.sourceKind = sourceKind
         self.contentKind = contentKind
         self.streamURL = streamURL
+        self.fallbackStreamURL = fallbackStreamURL
         self.tweetText = tweetText
         self.publishedAt = publishedAt
         self.thumbnailURL = thumbnailURL
@@ -66,6 +69,7 @@ struct Broadcast: Identifiable, Hashable, Codable {
         case sourceKind
         case contentKind
         case streamURL
+        case fallbackStreamURL
         case tweetText
         case publishedAt
         case thumbnailURL
@@ -84,6 +88,7 @@ struct Broadcast: Identifiable, Hashable, Codable {
         sourceKind = try container.decode(SourceKind.self, forKey: .sourceKind)
         contentKind = try container.decodeIfPresent(ContentKind.self, forKey: .contentKind) ?? .video
         streamURL = try container.decodeIfPresent(URL.self, forKey: .streamURL)
+        fallbackStreamURL = try container.decodeIfPresent(URL.self, forKey: .fallbackStreamURL)
         tweetText = try container.decodeIfPresent(String.self, forKey: .tweetText)
         publishedAt = try container.decodeIfPresent(Date.self, forKey: .publishedAt)
         thumbnailURL = try container.decodeIfPresent(URL.self, forKey: .thumbnailURL)

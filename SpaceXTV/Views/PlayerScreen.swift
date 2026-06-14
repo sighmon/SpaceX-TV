@@ -30,7 +30,9 @@ final class PlayerViewModel: ObservableObject {
         debugLines = [
             "Status: \(broadcast.sourceURL.absoluteString)",
             "Stored stream: \(broadcast.streamURL?.absoluteString ?? "none")",
+            "Fallback stream: \(broadcast.fallbackStreamURL?.absoluteString ?? "none")",
         ]
+        print("[SpaceXTV] Fallback stream: \(broadcast.fallbackStreamURL?.absoluteString ?? "none")")
         do {
             let resolved = try await BroadcastResolver().resolve(broadcast)
             debugLines.append("Resolved stream: \(resolved.streamURL.absoluteString)")
@@ -44,28 +46,39 @@ final class PlayerViewModel: ObservableObject {
     }
 
     func appendPlayerDebug(_ line: String) {
-        debugLines.append(line)
-        print("[SpaceXTV] \(line)")
+        log(line)
     }
 
     func refreshStreamAfterPlaybackFailure(resumePosition: Double?) async {
         guard !isRefreshingStream else {
-            debugLines.append("Skipping stream refresh: refresh already in progress")
+            log("Skipping stream refresh: refresh already in progress")
             return
         }
         if let failedURL = currentStreamURL,
-           let fallbackURL = spaceXHLSFallbackURL(for: failedURL),
+           let fallbackURL = alternateStreamURL(for: failedURL),
            !usedFallbackStreamURLs.contains(fallbackURL) {
             usedFallbackStreamURLs.insert(fallbackURL)
             playbackGeneration += 1
-            debugLines.append("MP4 playback failed; falling back to HLS: \(fallbackURL.absoluteString)")
-            await preflight(fallbackURL)
-            state = .ready(fallbackURL, videoPlayerTitle(currentTitle ?? broadcast.title), playbackGeneration, resumePosition)
+            let title = videoPlayerTitle(currentTitle ?? broadcast.title)
+            log("Playback failed; switching format: \(fallbackURL.absoluteString)")
+            state = .ready(fallbackURL, title, playbackGeneration, resumePosition)
+            Task { await preflight(fallbackURL) }
+            return
+        }
+
+        if let failedURL = currentStreamURL {
+            log("No unused alternate format for: \(failedURL.absoluteString)")
+        }
+
+        if broadcast.fallbackStreamURL != nil {
+            let message = "Both available playback formats stalled."
+            log(message)
+            state = .failed(message)
             return
         }
 
         guard canRefreshStream else {
-            debugLines.append("Skipping stream refresh: refresh limit reached")
+            log("Skipping stream refresh: refresh limit reached")
             return
         }
 
@@ -73,19 +86,24 @@ final class PlayerViewModel: ObservableObject {
         defer { isRefreshingStream = false }
         streamRefreshCount += 1
         lastStreamRefreshDate = Date()
-        debugLines.append("Refreshing stream after playback failure at \(formattedTime(resumePosition))")
+        log("Refreshing stream after playback failure at \(formattedTime(resumePosition))")
 
         do {
             let resolved = try await BroadcastResolver().resolve(broadcast)
             playbackGeneration += 1
-            debugLines.append("Refreshed stream: \(resolved.streamURL.absoluteString)")
-            await preflight(resolved.streamURL)
+            log("Refreshed stream: \(resolved.streamURL.absoluteString)")
             state = .ready(resolved.streamURL, videoPlayerTitle(resolved.title ?? broadcast.title), playbackGeneration, resumePosition)
+            Task { await preflight(resolved.streamURL) }
         } catch {
             let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            debugLines.append("Stream refresh failed: \(message)")
+            log("Stream refresh failed: \(message)")
             state = .failed(message)
         }
+    }
+
+    private func log(_ line: String) {
+        debugLines.append(line)
+        print("[SpaceXTV] \(line)")
     }
 
     private var canRefreshStream: Bool {
@@ -122,14 +140,14 @@ final class PlayerViewModel: ObservableObject {
             let statusCode = httpResponse?.statusCode ?? -1
             let contentType = httpResponse?.value(forHTTPHeaderField: "Content-Type") ?? "unknown"
             let contentLength = httpResponse?.value(forHTTPHeaderField: "Content-Length") ?? "unknown"
-            debugLines.append("\(isPlaylist ? "HLS" : "Stream") preflight HTTP \(statusCode), \(data.count) bytes")
-            debugLines.append("Preflight headers: type \(contentType), length \(contentLength)")
+            log("\(isPlaylist ? "HLS" : "Stream") preflight HTTP \(statusCode), \(data.count) bytes")
+            log("Preflight headers: type \(contentType), length \(contentLength)")
 
             if isPlaylist, let preview = String(data: data.prefix(120), encoding: .utf8) {
-                debugLines.append("HLS preview: \(preview.replacingOccurrences(of: "\n", with: " "))")
+                log("HLS preview: \(preview.replacingOccurrences(of: "\n", with: " "))")
             }
         } catch {
-            debugLines.append("\(isPlaylist ? "HLS" : "Stream") preflight failed: \(error.localizedDescription)")
+            log("\(isPlaylist ? "HLS" : "Stream") preflight failed: \(error.localizedDescription)")
         }
     }
 
@@ -169,6 +187,13 @@ final class PlayerViewModel: ObservableObject {
         return directoryURL
             .appendingPathComponent(baseName)
             .appendingPathExtension("m3u8")
+    }
+
+    private func alternateStreamURL(for streamURL: URL) -> URL? {
+        if let fallbackURL = broadcast.fallbackStreamURL {
+            return fallbackURL == streamURL ? nil : fallbackURL
+        }
+        return spaceXHLSFallbackURL(for: streamURL)
     }
 }
 
@@ -241,6 +266,7 @@ struct PlayerScreen: View {
                     ) { line in
                         model.appendPlayerDebug(line)
                     }
+                    .id(playbackGeneration)
                     .ignoresSafeArea()
 
                     if showsPlaybackBackButton || isPlaybackPaused {
@@ -375,7 +401,9 @@ struct TVPlayerView: UIViewControllerRepresentable {
         context.coordinator.installPinchRecognizer(on: controller.view, playerController: controller)
         context.coordinator.installVideoSurfaceDragBlockers(on: controller.view, playerController: controller)
 #endif
-        controller.player?.play()
+        if let player = controller.player {
+            startPlayback(player, at: resumePosition)
+        }
         return host
     }
 
@@ -402,15 +430,30 @@ struct TVPlayerView: UIViewControllerRepresentable {
         let player = context.coordinator.makePlayer(for: streamURL, title: title)
         controller.player = player
         context.coordinator.stop(oldPlayer)
-        if let resumePosition, resumePosition.isFinite, resumePosition > 0 {
-            player.seek(
-                to: CMTime(seconds: resumePosition, preferredTimescale: 600),
-                toleranceBefore: .zero,
-                toleranceAfter: .zero
-            )
-            onDebug("Resuming refreshed stream at \(Int(resumePosition))s")
+        startPlayback(player, at: resumePosition)
+    }
+
+    private func startPlayback(_ player: AVPlayer, at resumePosition: Double?) {
+        guard let resumePosition, resumePosition.isFinite, resumePosition > 0 else {
+            player.play()
+            return
         }
-        player.play()
+
+        let target = CMTime(seconds: resumePosition, preferredTimescale: 600)
+        let tolerance = CMTime(seconds: 1, preferredTimescale: 600)
+        onDebug("Seeking refreshed stream to \(Int(resumePosition))s")
+        player.seek(
+            to: target,
+            toleranceBefore: tolerance,
+            toleranceAfter: tolerance
+        ) { finished in
+            guard finished else {
+                onDebug("Resume seek was cancelled")
+                return
+            }
+            onDebug("Resuming refreshed stream at \(Int(resumePosition))s")
+            player.play()
+        }
     }
 
     static func dismantleUIViewController(_ host: PlayerHostViewController, coordinator: Coordinator) {
@@ -500,9 +543,11 @@ struct TVPlayerView: UIViewControllerRepresentable {
         private let onDebug: (String) -> Void
         private var statusObservation: NSKeyValueObservation?
         private var playbackObservation: NSKeyValueObservation?
+        private weak var observedPlayer: AVPlayer?
         private var endObserver: NSObjectProtocol?
         private var stallObserver: NSObjectProtocol?
         private var accessLogObserver: NSObjectProtocol?
+        private var stallRecoveryTask: Task<Void, Never>?
         private weak var tapRecognizer: UITapGestureRecognizer?
 #if !os(tvOS)
         weak var hostController: PlayerHostViewController?
@@ -537,6 +582,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
         }
 
         deinit {
+            stallRecoveryTask?.cancel()
             if let endObserver {
                 NotificationCenter.default.removeObserver(endObserver)
             }
@@ -728,6 +774,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
         }
 
         private func observe(_ player: AVPlayer) {
+            observedPlayer = player
             playbackObservation = player.observe(\.timeControlStatus, options: [.new, .initial]) { [weak self] player, _ in
                 Task { @MainActor in
                     self?.onPlaybackPausedChanged(player.timeControlStatus == .paused)
@@ -736,6 +783,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
         }
 
         private func observe(_ item: AVPlayerItem) {
+            stallRecoveryTask?.cancel()
             if let endObserver {
                 NotificationCenter.default.removeObserver(endObserver)
             }
@@ -759,8 +807,28 @@ struct TVPlayerView: UIViewControllerRepresentable {
                 forName: .AVPlayerItemPlaybackStalled,
                 object: item,
                 queue: .main
-            ) { [weak self] _ in
+            ) { [weak self, weak item] _ in
                 self?.onDebug("AVPlayerItem playback stalled")
+                guard let self, let item else { return }
+                let stalledAt = item.currentTime().seconds
+                self.stallRecoveryTask?.cancel()
+                self.stallRecoveryTask = Task { @MainActor [weak self, weak item] in
+                    try? await Task.sleep(nanoseconds: 8_000_000_000)
+                    guard !Task.isCancelled, let self, let item else { return }
+                    guard self.observedPlayer?.timeControlStatus != .paused else {
+                        self.onDebug("Stall recovery cancelled while playback is paused")
+                        return
+                    }
+                    let currentTime = item.currentTime().seconds
+                    if stalledAt.isFinite,
+                       currentTime.isFinite,
+                       currentTime >= stalledAt + 1 {
+                        self.onDebug("Playback recovered from stall")
+                        return
+                    }
+                    self.onDebug("Playback remained stalled; switching stream format")
+                    self.onPlaybackFailure(currentTime.isFinite ? currentTime : nil)
+                }
             }
 
             accessLogObserver = NotificationCenter.default.addObserver(
