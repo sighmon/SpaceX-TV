@@ -18,6 +18,10 @@ class SpaceXXCardProcessorTest < Minitest::Test
     def stream_from_page(_url)
       [nil, nil]
     end
+
+    def page_thumbnail_for(_url)
+      "https://pbs.twimg.com/broadcast-page.jpg"
+    end
   end
 
   def test_processes_api_video_gallery_broadcast_and_negative_cards
@@ -40,6 +44,38 @@ class SpaceXXCardProcessorTest < Minitest::Test
       first.dig("entries", "post:video", "lastChecked"),
       second.dig("entries", "post:video", "lastChecked")
     )
+  end
+
+  def test_uses_largest_entity_image_like_the_app
+    value = response
+    broadcast = value.fetch("data").find { |post| post.fetch("id") == "broadcast" }
+    broadcast.fetch("entities").fetch("urls").first["images"] = [
+      { "url" => "https://pbs.twimg.com/card-small.jpg", "width" => 320, "height" => 180 },
+      { "url" => "https://pbs.twimg.com/card-large.jpg", "width" => 1280, "height" => 720 }
+    ]
+
+    entry = StubProcessor.new(now: NOW).process(value).dig("entries", "post:broadcast")
+
+    assert_equal "https://pbs.twimg.com/card-large.jpg", entry.fetch("thumbnailURL")
+  end
+
+  def test_does_not_reuse_entries_from_an_older_processor_version
+    first = StubProcessor.new(now: NOW).process(response)
+    first["version"] = SpaceXXCardProcessor::CACHE_VERSION - 1
+
+    second = StubProcessor.new(existing_cache: { "processed_cards" => first }, now: NOW + 60).process(response)
+
+    refute_equal(
+      first.dig("entries", "post:video", "lastChecked"),
+      second.dig("entries", "post:video", "lastChecked")
+    )
+  end
+
+  def test_parses_twitter_image_when_content_comes_before_name
+    processor = StubProcessor.new(now: NOW)
+    body = '<meta content="https://pbs.twimg.com/card.jpg" name="twitter:image">'
+
+    assert_equal "https://pbs.twimg.com/card.jpg", processor.send(:page_thumbnail, body)
   end
 
   private

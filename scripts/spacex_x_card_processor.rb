@@ -5,7 +5,7 @@ require "time"
 require "uri"
 
 class SpaceXXCardProcessor
-  CACHE_VERSION = 2
+  CACHE_VERSION = 3
   REPLAY_TTL = 7 * 24 * 60 * 60
   LIVE_TTL = 15 * 60
   NEGATIVE_TTL = 25 * 60 * 60
@@ -48,7 +48,8 @@ class SpaceXXCardProcessor
   }.freeze
 
   def initialize(existing_cache: nil, logger: nil, now: Time.now.utc)
-    @existing_entries = existing_cache&.dig("processed_cards", "entries") || {}
+    processed_cache = existing_cache&.fetch("processed_cards", nil)
+    @existing_entries = processed_cache&.fetch("version", nil) == CACHE_VERSION ? processed_cache.fetch("entries", {}) : {}
     @logger = logger || ->(_message) {}
     @now = now
     @web_configuration = nil
@@ -96,7 +97,8 @@ class SpaceXXCardProcessor
       return entry
     end
 
-    thumbnail_url = selected_media.filter_map { |media| media["preview_image_url"] || media["url"] }.first
+    thumbnail_url = selected_media.filter_map { |media| media["preview_image_url"] || media["url"] }.first ||
+      entity_thumbnail_url(post) || entity_thumbnail_url(quoted_post)
     variant = best_variant(selected_media)
     if variant
       return card_entry(
@@ -242,6 +244,16 @@ class SpaceXXCardProcessor
     end.first
   end
 
+  def entity_thumbnail_url(post)
+    return unless post
+
+    Array(post.dig("entities", "urls"))
+      .flat_map { |url| Array(url["images"]) }
+      .select { |image| image["url"] }
+      .max_by { |image| image["width"].to_i * image["height"].to_i }
+      &.fetch("url", nil)
+  end
+
   def content_fingerprint(post, media:, quoted_post:, quoted_media:, linked_broadcast_url:)
     parts = ["id:#{post.fetch("id")}"]
     text = post["text"].to_s.strip
@@ -281,9 +293,11 @@ class SpaceXXCardProcessor
       ).fetch("broadcasts").fetch(broadcast_id)
       media_key = broadcast.fetch("media_key")
       source = live_video_source(media_key, configuration.fetch(:bearer_token), guest_token)
+      thumbnail_url = best_broadcast_thumbnail(broadcast) || source["thumbnail_url"] || source["image_url"]
+      thumbnail_url ||= page_thumbnail_for("https://x.com/i/broadcasts/#{broadcast_id}")
       {
         stream_url: source["noRedirectPlaybackUrl"] || source["location"],
-        thumbnail_url: best_broadcast_thumbnail(broadcast) || source["thumbnail_url"] || source["image_url"],
+        thumbnail_url: thumbnail_url,
         is_live: broadcast["state"]&.downcase == "running"
       }
     rescue StandardError
@@ -385,11 +399,18 @@ class SpaceXXCardProcessor
     [stream_url, page_thumbnail(body)]
   end
 
+  def page_thumbnail_for(url)
+    page_thumbnail(normalized_page_body(request_text(url)))
+  rescue StandardError
+    nil
+  end
+
   def page_thumbnail(body)
     patterns = [
       /<meta[^>]+(?:property|name)=["']og:image(?::secure_url)?["'][^>]+content=["']([^"']+)["']/i,
       /<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']og:image(?::secure_url)?["']/i,
       /<meta[^>]+(?:property|name)=["']twitter:image(?::src)?["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']twitter:image(?::src)?["']/i,
       /"(?:thumbnail_image_original|thumbnail_image|preview_image_url|image_url_original|image_url_large|image_url_medium|image_url|poster_image|posterImage|thumbnailUrl|thumbnail_url)"\s*:\s*"([^"]+)"/i
     ]
     patterns.each do |pattern|
