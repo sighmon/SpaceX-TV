@@ -361,7 +361,7 @@ struct BroadcastDiscovery {
 
         let cache: XAPICacheResponse
         do {
-            cache = try xAPIDecoder().decode(XAPICacheResponse.self, from: data)
+            cache = try spaceXCMSDecoder().decode(XAPICacheResponse.self, from: data)
         } catch {
             report.add("X API cache decode failed: \(debugMessage(for: error))")
             throw BroadcastDiscoveryFailure(error: BroadcastDiscoveryError.invalidResponse, report: report)
@@ -1172,7 +1172,7 @@ struct BroadcastDiscoveryFailure: LocalizedError {
 // and negative results (plain posts that contain neither). This avoids re-checking
 // the same unchanged non-broadcast/non-gallery posts on every refresh.
 struct CardResolutionCache: Codable {
-    var version: Int = 2
+    var version: Int = 3
     var entries: [String: CardResolutionEntry] = [:]
 
     mutating func merge(_ incoming: CardResolutionCache) -> Int {

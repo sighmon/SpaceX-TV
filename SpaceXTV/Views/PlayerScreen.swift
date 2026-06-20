@@ -49,6 +49,19 @@ final class PlayerViewModel: ObservableObject {
         log(line)
     }
 
+    var alternateStreamDescription: String? {
+        guard let currentStreamURL,
+              let alternateURL = alternateStreamURL(for: currentStreamURL),
+              !usedFallbackStreamURLs.contains(alternateURL) else {
+            return nil
+        }
+        return alternateURL.pathExtension.lowercased() == "m3u8" ? "HLS" : "MP4"
+    }
+
+    func keepWaitingForCurrentStream() {
+        log("User chose to keep waiting for the current stream")
+    }
+
     func refreshStreamAfterPlaybackFailure(resumePosition: Double?) async {
         guard !isRefreshingStream else {
             log("Skipping stream refresh: refresh already in progress")
@@ -241,6 +254,7 @@ struct PlayerScreen: View {
                         title: title,
                         playbackGeneration: playbackGeneration,
                         resumePosition: resumePosition,
+                        alternateStreamDescription: model.alternateStreamDescription,
                         onTapped: {
                             showPlaybackBackButton()
                         },
@@ -254,6 +268,9 @@ struct PlayerScreen: View {
                         },
                         onEnded: {
                             dismiss()
+                        },
+                        onKeepWaiting: {
+                            model.keepWaitingForCurrentStream()
                         },
                         onPlaybackFailure: { resumePosition in
                             Task {
@@ -365,9 +382,11 @@ struct TVPlayerView: UIViewControllerRepresentable {
     var title: String
     var playbackGeneration: Int
     var resumePosition: Double?
+    var alternateStreamDescription: String?
     var onTapped: () -> Void
     var onPlaybackPausedChanged: (Bool) -> Void
     var onEnded: () -> Void
+    var onKeepWaiting: () -> Void
     var onPlaybackFailure: (Double?) -> Void
     var onFullScreenDismissed: () -> Void
     var onDebug: (String) -> Void
@@ -376,6 +395,8 @@ struct TVPlayerView: UIViewControllerRepresentable {
         let host = PlayerHostViewController()
         host.onFullScreenDismissed = onFullScreenDismissed
         let controller = host.playerController
+        context.coordinator.playerController = controller
+        context.coordinator.alternateStreamDescription = alternateStreamDescription
         context.coordinator.lastPlaybackGeneration = playbackGeneration
         context.coordinator.configureAudioSession()
         controller.player = context.coordinator.makePlayer(for: streamURL, title: title)
@@ -411,7 +432,9 @@ struct TVPlayerView: UIViewControllerRepresentable {
         let controller = host.playerController
         context.coordinator.onTapped = onTapped
         context.coordinator.onPlaybackPausedChanged = onPlaybackPausedChanged
+        context.coordinator.onKeepWaiting = onKeepWaiting
         context.coordinator.onPlaybackFailure = onPlaybackFailure
+        context.coordinator.alternateStreamDescription = alternateStreamDescription
         host.onFullScreenDismissed = onFullScreenDismissed
 #if !os(tvOS)
         host.shouldReportFullScreenDismissal = {
@@ -471,6 +494,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
             onTapped: onTapped,
             onPlaybackPausedChanged: onPlaybackPausedChanged,
             onEnded: onEnded,
+            onKeepWaiting: onKeepWaiting,
             onPlaybackFailure: onPlaybackFailure,
             onDebug: onDebug
         )
@@ -536,7 +560,10 @@ struct TVPlayerView: UIViewControllerRepresentable {
         var lastPlaybackGeneration = 0
         var onTapped: () -> Void
         var onPlaybackPausedChanged: (Bool) -> Void
+        var onKeepWaiting: () -> Void
         var onPlaybackFailure: (Double?) -> Void
+        var alternateStreamDescription: String?
+        weak var playerController: AVPlayerViewController?
         private var playbackTitle: String
         private var displayedResolution: String?
         private let onEnded: () -> Void
@@ -548,6 +575,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
         private var stallObserver: NSObjectProtocol?
         private var accessLogObserver: NSObjectProtocol?
         private var stallRecoveryTask: Task<Void, Never>?
+        private weak var streamChoiceAlert: UIAlertController?
         private weak var tapRecognizer: UITapGestureRecognizer?
 #if !os(tvOS)
         weak var hostController: PlayerHostViewController?
@@ -570,6 +598,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
             onTapped: @escaping () -> Void,
             onPlaybackPausedChanged: @escaping (Bool) -> Void,
             onEnded: @escaping () -> Void,
+            onKeepWaiting: @escaping () -> Void,
             onPlaybackFailure: @escaping (Double?) -> Void,
             onDebug: @escaping (String) -> Void
         ) {
@@ -577,6 +606,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
             self.onTapped = onTapped
             self.onPlaybackPausedChanged = onPlaybackPausedChanged
             self.onEnded = onEnded
+            self.onKeepWaiting = onKeepWaiting
             self.onPlaybackFailure = onPlaybackFailure
             self.onDebug = onDebug
         }
@@ -813,7 +843,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
                 let stalledAt = item.currentTime().seconds
                 self.stallRecoveryTask?.cancel()
                 self.stallRecoveryTask = Task { @MainActor [weak self, weak item] in
-                    try? await Task.sleep(nanoseconds: 8_000_000_000)
+                    try? await Task.sleep(for: .seconds(30))
                     guard !Task.isCancelled, let self, let item else { return }
                     guard self.observedPlayer?.timeControlStatus != .paused else {
                         self.onDebug("Stall recovery cancelled while playback is paused")
@@ -826,8 +856,8 @@ struct TVPlayerView: UIViewControllerRepresentable {
                         self.onDebug("Playback recovered from stall")
                         return
                     }
-                    self.onDebug("Playback remained stalled; switching stream format")
-                    self.onPlaybackFailure(currentTime.isFinite ? currentTime : nil)
+                    self.onDebug("Playback remained stalled; asking whether to switch stream format")
+                    self.presentStreamChoice(resumePosition: currentTime.isFinite ? currentTime : nil)
                 }
             }
 
@@ -872,6 +902,40 @@ struct TVPlayerView: UIViewControllerRepresentable {
                     }
                 }
             }
+        }
+
+        private func presentStreamChoice(resumePosition: Double?) {
+            guard streamChoiceAlert == nil else {
+                onDebug("Stream choice is already visible")
+                return
+            }
+            guard let alternateStreamDescription else {
+                onDebug("No alternate stream is available; refreshing current stream")
+                onPlaybackFailure(resumePosition)
+                return
+            }
+            guard let playerController else {
+                onDebug("Could not present stream choice: player controller unavailable")
+                return
+            }
+
+            let alert = UIAlertController(
+                title: "Playback is still buffering",
+                message: "Keep waiting for the current stream, or switch playback to \(alternateStreamDescription).",
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "Keep Waiting", style: .cancel) { [weak self] _ in
+                self?.onDebug("User chose to keep waiting for the current stream")
+                self?.onKeepWaiting()
+            })
+            alert.addAction(UIAlertAction(title: "Switch to \(alternateStreamDescription)", style: .default) { [weak self] _ in
+                self?.onDebug("User chose to switch stream format")
+                self?.onPlaybackFailure(resumePosition)
+            })
+
+            streamChoiceAlert = alert
+            onDebug("Presenting stream choice over native player")
+            playerController.present(alert, animated: true)
         }
 
         private func applyExternalMetadata(to item: AVPlayerItem) {
