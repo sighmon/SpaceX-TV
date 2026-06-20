@@ -62,6 +62,18 @@ final class PlayerViewModel: ObservableObject {
         log("User chose to keep waiting for the current stream")
     }
 
+    func reloadCurrentStream(resumePosition: Double?) {
+        guard let streamURL = currentStreamURL else {
+            log("Could not reload stream: current URL unavailable")
+            return
+        }
+        playbackGeneration += 1
+        let title = videoPlayerTitle(currentTitle ?? broadcast.title)
+        log("Reloading current stream at \(formattedTime(resumePosition)): \(streamURL.absoluteString)")
+        state = .ready(streamURL, title, playbackGeneration, resumePosition)
+        Task { await preflight(streamURL) }
+    }
+
     func refreshStreamAfterPlaybackFailure(resumePosition: Double?) async {
         guard !isRefreshingStream else {
             log("Skipping stream refresh: refresh already in progress")
@@ -272,6 +284,9 @@ struct PlayerScreen: View {
                         onKeepWaiting: {
                             model.keepWaitingForCurrentStream()
                         },
+                        onReloadStream: { resumePosition in
+                            model.reloadCurrentStream(resumePosition: resumePosition)
+                        },
                         onPlaybackFailure: { resumePosition in
                             Task {
                                 await model.refreshStreamAfterPlaybackFailure(resumePosition: resumePosition)
@@ -387,6 +402,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
     var onPlaybackPausedChanged: (Bool) -> Void
     var onEnded: () -> Void
     var onKeepWaiting: () -> Void
+    var onReloadStream: (Double?) -> Void
     var onPlaybackFailure: (Double?) -> Void
     var onFullScreenDismissed: () -> Void
     var onDebug: (String) -> Void
@@ -433,6 +449,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
         context.coordinator.onTapped = onTapped
         context.coordinator.onPlaybackPausedChanged = onPlaybackPausedChanged
         context.coordinator.onKeepWaiting = onKeepWaiting
+        context.coordinator.onReloadStream = onReloadStream
         context.coordinator.onPlaybackFailure = onPlaybackFailure
         context.coordinator.alternateStreamDescription = alternateStreamDescription
         host.onFullScreenDismissed = onFullScreenDismissed
@@ -495,6 +512,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
             onPlaybackPausedChanged: onPlaybackPausedChanged,
             onEnded: onEnded,
             onKeepWaiting: onKeepWaiting,
+            onReloadStream: onReloadStream,
             onPlaybackFailure: onPlaybackFailure,
             onDebug: onDebug
         )
@@ -561,6 +579,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
         var onTapped: () -> Void
         var onPlaybackPausedChanged: (Bool) -> Void
         var onKeepWaiting: () -> Void
+        var onReloadStream: (Double?) -> Void
         var onPlaybackFailure: (Double?) -> Void
         var alternateStreamDescription: String?
         weak var playerController: AVPlayerViewController?
@@ -599,6 +618,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
             onPlaybackPausedChanged: @escaping (Bool) -> Void,
             onEnded: @escaping () -> Void,
             onKeepWaiting: @escaping () -> Void,
+            onReloadStream: @escaping (Double?) -> Void,
             onPlaybackFailure: @escaping (Double?) -> Void,
             onDebug: @escaping (String) -> Void
         ) {
@@ -607,6 +627,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
             self.onPlaybackPausedChanged = onPlaybackPausedChanged
             self.onEnded = onEnded
             self.onKeepWaiting = onKeepWaiting
+            self.onReloadStream = onReloadStream
             self.onPlaybackFailure = onPlaybackFailure
             self.onDebug = onDebug
         }
@@ -909,29 +930,38 @@ struct TVPlayerView: UIViewControllerRepresentable {
                 onDebug("Stream choice is already visible")
                 return
             }
-            guard let alternateStreamDescription else {
-                onDebug("No alternate stream is available; refreshing current stream")
-                onPlaybackFailure(resumePosition)
-                return
-            }
             guard let playerController else {
                 onDebug("Could not present stream choice: player controller unavailable")
                 return
             }
 
+            let message: String
+            if let alternateStreamDescription {
+                message = "Keep waiting, reload at the current time, or switch playback to \(alternateStreamDescription)."
+            } else {
+                message = "Keep waiting, or reload the stream at the current time."
+            }
             let alert = UIAlertController(
                 title: "Playback is still buffering",
-                message: "Keep waiting for the current stream, or switch playback to \(alternateStreamDescription).",
+                message: message,
                 preferredStyle: .alert
             )
             alert.addAction(UIAlertAction(title: "Keep Waiting", style: .cancel) { [weak self] _ in
                 self?.onDebug("User chose to keep waiting for the current stream")
                 self?.onKeepWaiting()
             })
-            alert.addAction(UIAlertAction(title: "Switch to \(alternateStreamDescription)", style: .default) { [weak self] _ in
-                self?.onDebug("User chose to switch stream format")
-                self?.onPlaybackFailure(resumePosition)
-            })
+            let reloadAction = UIAlertAction(title: "Reload Stream", style: .default) { [weak self] _ in
+                self?.onDebug("User chose to reload the current stream")
+                self?.onReloadStream(resumePosition)
+            }
+            alert.addAction(reloadAction)
+            alert.preferredAction = reloadAction
+            if let alternateStreamDescription {
+                alert.addAction(UIAlertAction(title: "Switch to \(alternateStreamDescription)", style: .default) { [weak self] _ in
+                    self?.onDebug("User chose to switch stream format")
+                    self?.onPlaybackFailure(resumePosition)
+                })
+            }
 
             streamChoiceAlert = alert
             onDebug("Presenting stream choice over native player")
