@@ -68,22 +68,31 @@ struct BroadcastDiscovery {
         let timelineLimit = timelineFetchLimit(for: limit)
         report.add("X API cache target timeline limit: \(timelineLimit)")
 
+        var starshipCache: StarshipCacheSnapshot?
         let candidates = try await recentSpaceXBroadcastCandidatesFromCache(
             cacheURL: xAPICacheURL,
             timelineLimit: timelineLimit,
             cardCache: &cardCache,
-            report: &report
+            report: &report,
+            starshipCache: &starshipCache
         )
         report.add("Candidate statuses: \(candidates.count)")
 
-        return try await discoveryResult(from: candidates, prefersMP4Playback: prefersMP4Playback, cardCache: &cardCache, report: &report)
+        return try await discoveryResult(
+            from: candidates,
+            prefersMP4Playback: prefersMP4Playback,
+            cardCache: &cardCache,
+            report: &report,
+            starshipCache: starshipCache
+        )
     }
 
     private func discoveryResult(
         from initialCandidates: [BroadcastCandidate],
         prefersMP4Playback: Bool,
         cardCache: inout CardResolutionCache,
-        report: inout DiscoveryReport
+        report: inout DiscoveryReport,
+        starshipCache: StarshipCacheSnapshot? = nil
     ) async throws -> BroadcastDiscoveryResult {
         var candidates = deduplicatedCandidates(initialCandidates)
         var appendedStarshipFilmCandidates: [BroadcastCandidate] = []
@@ -91,7 +100,8 @@ struct BroadcastDiscovery {
         do {
             appendedStarshipFilmCandidates = try await recentStarshipFilmCandidates(
                 prefersMP4Playback: prefersMP4Playback,
-                report: &report
+                report: &report,
+                cachedPlaylist: starshipCache?.playlist
             )
             report.add("Starship film candidates: \(appendedStarshipFilmCandidates.count)")
         } catch {
@@ -100,7 +110,8 @@ struct BroadcastDiscovery {
         do {
             appendedStarshipFlightTestCandidates = try await starshipFlightTestCandidates(
                 prefersMP4Playback: prefersMP4Playback,
-                report: &report
+                report: &report,
+                cache: starshipCache
             )
             report.add("Starship flight test candidates: \(appendedStarshipFlightTestCandidates.count)")
         } catch {
@@ -331,7 +342,8 @@ struct BroadcastDiscovery {
         cacheURL: URL,
         timelineLimit: Int,
         cardCache: inout CardResolutionCache,
-        report: inout DiscoveryReport
+        report: inout DiscoveryReport,
+        starshipCache: inout StarshipCacheSnapshot?
     ) async throws -> [BroadcastCandidate] {
         report.add("Using X API cache for timeline discovery")
         report.add("X API cache GET: \(cacheURL.absoluteString)")
@@ -360,6 +372,24 @@ struct BroadcastDiscovery {
             report.add("X API cache generated at: \(ISO8601DateFormatter().string(from: generatedAt))")
         }
         report.add("X API cache source: \(cache.source ?? "unknown")")
+        if let playlist = cache.starshipPlaylist,
+           let flightTestsPlaylist = cache.starshipFlightTestsPlaylist,
+           let launchTiles = cache.starshipLaunchTiles,
+           let missions = cache.starshipMissions {
+            starshipCache = StarshipCacheSnapshot(
+                playlist: playlist,
+                flightTestsPlaylist: flightTestsPlaylist,
+                launchTiles: launchTiles,
+                missions: missions
+            )
+            report.add(
+                "X API cache supplied SpaceX CMS data: \(playlist.media.count) films, "
+                    + "\(flightTestsPlaylist.media.count) flight test films, "
+                    + "\(launchTiles.count) launch tiles, \(missions.count) missions"
+            )
+        } else {
+            report.add("X API cache has no complete SpaceX CMS snapshot; using live SpaceX CMS")
+        }
         if let processedCards = cache.processedCards,
            processedCards.version == cardCache.version {
             let mergedCount = cardCache.merge(processedCards)
@@ -643,11 +673,18 @@ struct BroadcastDiscovery {
 
     private func recentStarshipFilmCandidates(
         prefersMP4Playback: Bool,
-        report: inout DiscoveryReport
+        report: inout DiscoveryReport,
+        cachedPlaylist: SpaceXMediaPlaylist? = nil
     ) async throws -> [BroadcastCandidate] {
-        report.add("SpaceX CMS GET: \(starshipPlaylistURL.path)")
-        let data = try await spaceXCMSData(from: starshipPlaylistURL, report: &report)
-        let playlist = try spaceXCMSDecoder().decode(SpaceXMediaPlaylist.self, from: data)
+        let playlist: SpaceXMediaPlaylist
+        if let cachedPlaylist {
+            report.add("Using cached SpaceX Starship playlist")
+            playlist = cachedPlaylist
+        } else {
+            report.add("SpaceX CMS GET: \(starshipPlaylistURL.path)")
+            let data = try await spaceXCMSData(from: starshipPlaylistURL, report: &report)
+            playlist = try spaceXCMSDecoder().decode(SpaceXMediaPlaylist.self, from: data)
+        }
 
         return playlist.media.compactMap { media in
             guard let playbackURLs = media.playbackURLs(prefersMP4Playback: prefersMP4Playback) else { return nil }
@@ -670,11 +707,18 @@ struct BroadcastDiscovery {
 
     private func starshipFlightTestCandidates(
         prefersMP4Playback: Bool,
-        report: inout DiscoveryReport
+        report: inout DiscoveryReport,
+        cache: StarshipCacheSnapshot? = nil
     ) async throws -> [BroadcastCandidate] {
-        report.add("SpaceX CMS GET: \(starshipFlightTestsPlaylistURL.path)")
-        let data = try await spaceXCMSData(from: starshipFlightTestsPlaylistURL, report: &report)
-        let playlist = try spaceXCMSDecoder().decode(SpaceXMediaPlaylist.self, from: data)
+        let playlist: SpaceXMediaPlaylist
+        if let cache {
+            report.add("Using cached SpaceX Starship flight tests playlist")
+            playlist = cache.flightTestsPlaylist
+        } else {
+            report.add("SpaceX CMS GET: \(starshipFlightTestsPlaylistURL.path)")
+            let data = try await spaceXCMSData(from: starshipFlightTestsPlaylistURL, report: &report)
+            playlist = try spaceXCMSDecoder().decode(SpaceXMediaPlaylist.self, from: data)
+        }
 
         let playlistCandidates: [BroadcastCandidate] = playlist.media.compactMap { media in
             guard let playbackURLs = media.playbackURLs(prefersMP4Playback: prefersMP4Playback) else { return nil }
@@ -694,19 +738,36 @@ struct BroadcastDiscovery {
             )
         }
 
-        let launchTileCandidates = try await starshipFlightTestLaunchTileCandidates(report: &report)
+        let launchTileCandidates = try await starshipFlightTestLaunchTileCandidates(
+            report: &report,
+            cache: cache
+        )
         return deduplicatedCandidates(playlistCandidates + launchTileCandidates)
     }
 
-    private func starshipFlightTestLaunchTileCandidates(report: inout DiscoveryReport) async throws -> [BroadcastCandidate] {
-        report.add("SpaceX CMS GET: \(launchTilesURL.path)")
-        let data = try await spaceXCMSData(from: launchTilesURL, report: &report)
-        let tiles = try JSONDecoder().decode([SpaceXStarshipLaunchTile].self, from: data)
+    private func starshipFlightTestLaunchTileCandidates(
+        report: inout DiscoveryReport,
+        cache: StarshipCacheSnapshot? = nil
+    ) async throws -> [BroadcastCandidate] {
+        let tiles: [SpaceXStarshipLaunchTile]
+        if let cache {
+            report.add("Using cached SpaceX launch tiles and mission records")
+            tiles = cache.launchTiles
+        } else {
+            report.add("SpaceX CMS GET: \(launchTilesURL.path)")
+            let data = try await spaceXCMSData(from: launchTilesURL, report: &report)
+            tiles = try JSONDecoder().decode([SpaceXStarshipLaunchTile].self, from: data)
+        }
         let flightTestTiles = tiles
             .filter(\.isStarshipFlightTest)
             .sortedByPublishedDateDescending()
 
-        let missionsByLink = try await starshipMissions(for: flightTestTiles.map(\.link))
+        let missionsByLink: [String: SpaceXStarshipMission]
+        if let cache {
+            missionsByLink = cache.missions
+        } else {
+            missionsByLink = try await starshipMissions(for: flightTestTiles.map(\.link))
+        }
 
         return flightTestTiles.map { tile in
             let mission = missionsByLink[tile.link]
@@ -1250,6 +1311,10 @@ private struct XAPICacheResponse: Decodable {
     var pinned: XAPIPostsResponse?
     var timeline: XAPIPostsResponse
     var processedCards: CardResolutionCache?
+    var starshipPlaylist: SpaceXMediaPlaylist?
+    var starshipFlightTestsPlaylist: SpaceXMediaPlaylist?
+    var starshipLaunchTiles: [SpaceXStarshipLaunchTile]?
+    var starshipMissions: [String: SpaceXStarshipMission]?
 
     enum CodingKeys: String, CodingKey {
         case generatedAt = "generated_at"
@@ -1258,6 +1323,10 @@ private struct XAPICacheResponse: Decodable {
         case pinned
         case timeline
         case processedCards = "processed_cards"
+        case starshipPlaylist = "starship_playlist"
+        case starshipFlightTestsPlaylist = "starship_flight_tests_playlist"
+        case starshipLaunchTiles = "starship_launch_tiles"
+        case starshipMissions = "starship_missions"
     }
 }
 
@@ -1500,6 +1569,13 @@ private struct SpaceXMediaPlaylist: Decodable {
     var title: String
     var link: String
     var media: [SpaceXMediaItem]
+}
+
+private struct StarshipCacheSnapshot {
+    var playlist: SpaceXMediaPlaylist
+    var flightTestsPlaylist: SpaceXMediaPlaylist
+    var launchTiles: [SpaceXStarshipLaunchTile]
+    var missions: [String: SpaceXStarshipMission]
 }
 
 struct SpaceXPlaybackURLs: Equatable {
