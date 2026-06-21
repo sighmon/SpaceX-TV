@@ -18,6 +18,7 @@ final class BroadcastLibrary: ObservableObject {
     @Published private(set) var xAPICacheGeneratedAt: Date?
     @Published private(set) var cardCheckHits: Int = 0
     @Published private(set) var cardCheckMisses: Int = 0
+    @Published private(set) var totalViewingTime: TimeInterval
     @Published var xAPIBearerToken: String {
         didSet {
             tokenStore.save(xAPIBearerToken)
@@ -81,6 +82,7 @@ final class BroadcastLibrary: ObservableObject {
         self.tokenStore = tokenStore
         self.calendar = calendar
         self.broadcasts = []
+        self.totalViewingTime = max(0, defaults.double(forKey: Keys.totalViewingTime))
         let keychainToken = tokenStore.token()
         if keychainToken.isEmpty, let legacyToken = defaults.string(forKey: Keys.xAPIBearerToken), !legacyToken.isEmpty {
             self.xAPIBearerToken = legacyToken
@@ -118,6 +120,7 @@ final class BroadcastLibrary: ObservableObject {
         self.xAPICacheGeneratedAt = Date(timeIntervalSince1970: 1_779_996_400)
         self.cardCheckHits = 0
         self.cardCheckMisses = 0
+        self.totalViewingTime = 0
         self.xAPIBearerToken = "preview-token"
         self.usesXAPIBearerToken = false
         self.showsPlayerDebugOverlay = false
@@ -318,6 +321,12 @@ final class BroadcastLibrary: ObservableObject {
         cardCheckMisses = 0
     }
 
+    func recordViewingTime(_ duration: TimeInterval) {
+        guard duration.isFinite, duration > 0 else { return }
+        totalViewingTime += duration
+        defaults.set(totalViewingTime, forKey: Keys.totalViewingTime)
+    }
+
     private func showMissingTokenState() {
         cachedBroadcasts = []
         broadcasts = []
@@ -338,6 +347,7 @@ private enum Keys {
     static let prefersMP4Playback = "prefersMP4Playback"
     static let dailyCache = "dailyBroadcastCache"
     static let cardResolutionCache = "cardResolutionCache"
+    static let totalViewingTime = "totalViewingTime"
 }
 
 private struct DailyBroadcastCache: Codable {

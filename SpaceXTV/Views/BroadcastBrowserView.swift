@@ -407,6 +407,18 @@ struct BroadcastBrowserView: View {
                 .foregroundStyle(.white.opacity(0.46))
                 .frame(width: width, alignment: .center)
                 .padding(.top, 8)
+
+            HStack(spacing: 5) {
+                Text("T+")
+                    .foregroundStyle(.white.opacity(0.38))
+
+                Text(formattedViewingTime)
+                    .foregroundStyle(.white.opacity(0.68))
+            }
+                .font(.caption.weight(.bold).monospacedDigit())
+                .frame(width: width, alignment: .center)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Time watched \(formattedViewingTime)")
         }
         .frame(width: width, alignment: .center)
     }
@@ -422,6 +434,14 @@ struct BroadcastBrowserView: View {
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         return formatter
+    }
+
+    private var formattedViewingTime: String {
+        let totalSeconds = max(0, Int(library.totalViewingTime.rounded(.down)))
+        let hours = totalSeconds / 3_600
+        let minutes = (totalSeconds % 3_600) / 60
+        let seconds = totalSeconds % 60
+        return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
     }
 
     private func horizontalPadding(for width: CGFloat) -> CGFloat {

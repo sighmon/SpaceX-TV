@@ -244,6 +244,7 @@ struct PlayerScreen: View {
     @StateObject private var model: PlayerViewModel
     @State private var showsPlaybackBackButton = false
     @State private var isPlaybackPaused = false
+    @State private var uncommittedViewingTime: TimeInterval = 0
     @State private var backButtonHideTask: Task<Void, Never>?
 
     init(broadcast: Broadcast) {
@@ -278,7 +279,12 @@ struct PlayerScreen: View {
                                 hidePlaybackBackButtonAfterDelay()
                             }
                         },
+                        onPlaybackTimeAdvanced: { duration in
+                            uncommittedViewingTime += duration
+                            commitViewingTimeIfNeeded()
+                        },
                         onEnded: {
+                            commitViewingTime()
                             dismiss()
                         },
                         onKeepWaiting: {
@@ -337,6 +343,7 @@ struct PlayerScreen: View {
         .animation(.easeOut(duration: 0.18), value: isPlaybackPaused)
         .onDisappear {
             backButtonHideTask?.cancel()
+            commitViewingTime()
         }
     }
 
@@ -390,6 +397,17 @@ struct PlayerScreen: View {
             }
         }
     }
+
+    private func commitViewingTimeIfNeeded() {
+        guard uncommittedViewingTime >= 15 else { return }
+        commitViewingTime()
+    }
+
+    private func commitViewingTime() {
+        guard uncommittedViewingTime > 0 else { return }
+        library.recordViewingTime(uncommittedViewingTime)
+        uncommittedViewingTime = 0
+    }
 }
 
 struct TVPlayerView: UIViewControllerRepresentable {
@@ -400,6 +418,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
     var alternateStreamDescription: String?
     var onTapped: () -> Void
     var onPlaybackPausedChanged: (Bool) -> Void
+    var onPlaybackTimeAdvanced: (TimeInterval) -> Void
     var onEnded: () -> Void
     var onKeepWaiting: () -> Void
     var onReloadStream: (Double?) -> Void
@@ -448,6 +467,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
         let controller = host.playerController
         context.coordinator.onTapped = onTapped
         context.coordinator.onPlaybackPausedChanged = onPlaybackPausedChanged
+        context.coordinator.onPlaybackTimeAdvanced = onPlaybackTimeAdvanced
         context.coordinator.onKeepWaiting = onKeepWaiting
         context.coordinator.onReloadStream = onReloadStream
         context.coordinator.onPlaybackFailure = onPlaybackFailure
@@ -510,6 +530,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
             playbackTitle: title,
             onTapped: onTapped,
             onPlaybackPausedChanged: onPlaybackPausedChanged,
+            onPlaybackTimeAdvanced: onPlaybackTimeAdvanced,
             onEnded: onEnded,
             onKeepWaiting: onKeepWaiting,
             onReloadStream: onReloadStream,
@@ -578,6 +599,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
         var lastPlaybackGeneration = 0
         var onTapped: () -> Void
         var onPlaybackPausedChanged: (Bool) -> Void
+        var onPlaybackTimeAdvanced: (TimeInterval) -> Void
         var onKeepWaiting: () -> Void
         var onReloadStream: (Double?) -> Void
         var onPlaybackFailure: (Double?) -> Void
@@ -590,6 +612,9 @@ struct TVPlayerView: UIViewControllerRepresentable {
         private var statusObservation: NSKeyValueObservation?
         private var playbackObservation: NSKeyValueObservation?
         private weak var observedPlayer: AVPlayer?
+        private weak var progressObservedPlayer: AVPlayer?
+        private var progressTimeObserver: Any?
+        private var lastObservedPlaybackTime: TimeInterval?
         private var endObserver: NSObjectProtocol?
         private var stallObserver: NSObjectProtocol?
         private var accessLogObserver: NSObjectProtocol?
@@ -616,6 +641,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
             playbackTitle: String,
             onTapped: @escaping () -> Void,
             onPlaybackPausedChanged: @escaping (Bool) -> Void,
+            onPlaybackTimeAdvanced: @escaping (TimeInterval) -> Void,
             onEnded: @escaping () -> Void,
             onKeepWaiting: @escaping () -> Void,
             onReloadStream: @escaping (Double?) -> Void,
@@ -625,6 +651,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
             self.playbackTitle = playbackTitle
             self.onTapped = onTapped
             self.onPlaybackPausedChanged = onPlaybackPausedChanged
+            self.onPlaybackTimeAdvanced = onPlaybackTimeAdvanced
             self.onEnded = onEnded
             self.onKeepWaiting = onKeepWaiting
             self.onReloadStream = onReloadStream
@@ -645,6 +672,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
             }
             statusObservation?.invalidate()
             playbackObservation?.invalidate()
+            removeProgressObserver()
         }
 
         func installTapRecognizer(on view: UIView) {
@@ -808,6 +836,9 @@ struct TVPlayerView: UIViewControllerRepresentable {
         }
 
         func stop(_ player: AVPlayer?) {
+            if player === progressObservedPlayer {
+                removeProgressObserver()
+            }
             player?.pause()
             player?.replaceCurrentItem(with: nil)
         }
@@ -826,11 +857,40 @@ struct TVPlayerView: UIViewControllerRepresentable {
 
         private func observe(_ player: AVPlayer) {
             observedPlayer = player
+            removeProgressObserver()
+            progressObservedPlayer = player
+            lastObservedPlaybackTime = nil
+            progressTimeObserver = player.addPeriodicTimeObserver(
+                forInterval: CMTime(seconds: 1, preferredTimescale: 600),
+                queue: .main
+            ) { [weak self, weak player] time in
+                guard let self, let player else { return }
+                let currentTime = time.seconds
+                guard currentTime.isFinite else { return }
+                defer { self.lastObservedPlaybackTime = currentTime }
+                guard player.timeControlStatus == .playing,
+                      let previousTime = self.lastObservedPlaybackTime else {
+                    return
+                }
+
+                let advanced = currentTime - previousTime
+                guard advanced > 0, advanced <= 5 else { return }
+                self.onPlaybackTimeAdvanced(advanced)
+            }
             playbackObservation = player.observe(\.timeControlStatus, options: [.new, .initial]) { [weak self] player, _ in
                 Task { @MainActor in
                     self?.onPlaybackPausedChanged(player.timeControlStatus == .paused)
                 }
             }
+        }
+
+        private func removeProgressObserver() {
+            if let progressTimeObserver, let progressObservedPlayer {
+                progressObservedPlayer.removeTimeObserver(progressTimeObserver)
+            }
+            progressTimeObserver = nil
+            progressObservedPlayer = nil
+            lastObservedPlaybackTime = nil
         }
 
         private func observe(_ item: AVPlayerItem) {

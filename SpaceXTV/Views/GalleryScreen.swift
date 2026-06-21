@@ -5,9 +5,12 @@ import UIKit
 
 struct GalleryScreen: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    @EnvironmentObject private var library: BroadcastLibrary
     var gallery: Broadcast
     var onDismiss: (() -> Void)?
     @State private var selectedImageID: GalleryImage.ID?
+    @State private var viewingStartedAt: Date?
 #if os(tvOS)
     @State private var isSlideshowPlaying = false
     @State private var imageDisplayMode: GalleryImageDisplayMode = .fill
@@ -95,9 +98,17 @@ struct GalleryScreen: View {
 #endif
         .onAppear {
             selectedImageID = selectedImageID ?? gallery.galleryImages.first?.id
+            startViewingIfNeeded()
 #if !os(tvOS)
             showBackButtonTemporarily()
 #endif
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                startViewingIfNeeded()
+            } else {
+                commitViewingTime()
+            }
         }
 #if os(tvOS)
         .focusable(true)
@@ -121,6 +132,7 @@ struct GalleryScreen: View {
             }
         }
         .onDisappear {
+            commitViewingTime()
             stopSlideshow()
             playbackIconHideTask?.cancel()
         }
@@ -149,6 +161,7 @@ struct GalleryScreen: View {
         .animation(.easeOut(duration: 0.18), value: showsBackButton)
         .animation(.easeOut(duration: 0.18), value: dismissDragOffset)
         .onDisappear {
+            commitViewingTime()
             backButtonHideTask?.cancel()
         }
 #endif
@@ -278,11 +291,23 @@ struct GalleryScreen: View {
 #endif
 
     private func close() {
+        commitViewingTime()
         if let onDismiss {
             onDismiss()
         } else {
             dismiss()
         }
+    }
+
+    private func startViewingIfNeeded() {
+        guard scenePhase == .active, viewingStartedAt == nil else { return }
+        viewingStartedAt = Date()
+    }
+
+    private func commitViewingTime() {
+        guard let viewingStartedAt else { return }
+        library.recordViewingTime(Date().timeIntervalSince(viewingStartedAt))
+        self.viewingStartedAt = nil
     }
 }
 

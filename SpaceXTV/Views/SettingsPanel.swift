@@ -21,6 +21,14 @@ struct SettingsView: View {
         }
     }
 
+    private var formattedViewingTime: String {
+        let totalSeconds = max(0, Int(library.totalViewingTime.rounded(.down)))
+        let hours = totalSeconds / 3_600
+        let minutes = (totalSeconds % 3_600) / 60
+        let seconds = totalSeconds % 60
+        return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+    }
+
     var body: some View {
         ZStack {
             LinearGradient(
@@ -106,6 +114,18 @@ struct SettingsView: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .center)
+
+                    HStack(spacing: 5) {
+                        Text("T+")
+                            .foregroundStyle(.white.opacity(0.38))
+
+                        Text(formattedViewingTime)
+                            .foregroundStyle(.white.opacity(0.68))
+                    }
+                    .font(.callout.weight(.bold).monospacedDigit())
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Time watched \(formattedViewingTime)")
 
                     if !versionText.isEmpty {
                         Text(versionText)
