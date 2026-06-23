@@ -11,7 +11,7 @@ enum BroadcastResolverError: LocalizedError {
         case .invalidResponse:
             "The resolver returned a response the app could not understand."
         case .missingStream:
-            "No playable HLS stream was found for this broadcast."
+            "No playable HLS or MP4 stream was found for this broadcast."
         case .missingBroadcastID:
             "The X broadcast URL did not contain a broadcast ID."
         case .missingWebBearerToken:
@@ -64,6 +64,8 @@ struct BroadcastResolver {
         switch broadcast.sourceKind {
         case .hls:
             return ResolvedBroadcast(title: broadcast.title, streamURL: broadcast.sourceURL, thumbnailURL: broadcast.thumbnailURL)
+        case .youtube:
+            throw BroadcastResolverError.missingStream
         case .xBroadcast:
             if let streamURL = broadcast.streamURL {
                 return ResolvedBroadcast(
@@ -115,16 +117,7 @@ struct BroadcastResolver {
             .replacingOccurrences(of: "%26", with: "&")
             .replacingOccurrences(of: "&amp;", with: "&")
 
-        let pattern = #"https:\/\/[^"'<>\s\\]+\.m3u8(?:\?[^"'<>\s\\]+)?"#
-        let regex = try NSRegularExpression(pattern: pattern)
-        let range = NSRange(normalizedBody.startIndex ..< normalizedBody.endIndex, in: normalizedBody)
-
-        let streamURL = regex.matches(in: normalizedBody, range: range)
-            .compactMap { Range($0.range, in: normalizedBody).map { String(normalizedBody[$0]) } }
-            .compactMap(URL.init(string:))
-            .first { $0.host?.contains("pscp.tv") == true || $0.pathExtension == "m3u8" }
-
-        guard let streamURL else {
+        guard let streamURL = try playbackURL(inPageBody: normalizedBody) else {
             throw BroadcastResolverError.missingStream
         }
 
@@ -133,6 +126,23 @@ struct BroadcastResolver {
             streamURL: try await highestQualityStreamURL(from: streamURL),
             thumbnailURL: pageThumbnailURL(in: normalizedBody)
         )
+    }
+
+    func playbackURL(inPageBody body: String) throws -> URL? {
+        let range = NSRange(body.startIndex ..< body.endIndex, in: body)
+
+        for fileExtension in ["m3u8", "mp4"] {
+            let pattern = #"https:\/\/[^"'<>\s\\]+\."# + fileExtension + #"(?:\?[^"'<>\s\\]+)?"#
+            let regex = try NSRegularExpression(pattern: pattern, options: .caseInsensitive)
+            if let streamURL = regex.matches(in: body, range: range)
+                .compactMap({ Range($0.range, in: body).map { String(body[$0]) } })
+                .compactMap(URL.init(string:))
+                .first {
+                return streamURL
+            }
+        }
+
+        return nil
     }
 
     private func xBroadcastID(from url: URL) -> String? {

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct RootView: View {
     @State private var selectedBroadcast: Broadcast?
@@ -12,10 +13,14 @@ struct RootView: View {
                     selectedBroadcast: $selectedBroadcast,
                     selectedGallery: $selectedGallery,
                     showsSettings: $showsSettings
-                )
+                    )
                     .toolbar(.hidden, for: .navigationBar)
                     .navigationDestination(item: $selectedBroadcast) { broadcast in
-                        PlayerScreen(broadcast: broadcast)
+                        if broadcast.sourceKind == .youtube {
+                            YouTubeLaunchScreen(broadcast: broadcast)
+                        } else {
+                            PlayerScreen(broadcast: broadcast)
+                        }
                     }
 #if os(tvOS)
                     .navigationDestination(item: $selectedGallery) { gallery in
@@ -41,5 +46,69 @@ struct RootView: View {
 #if !os(tvOS)
         .animation(.easeInOut(duration: 0.28), value: selectedGallery?.id)
 #endif
+    }
+}
+
+private struct YouTubeLaunchScreen: View {
+    let broadcast: Broadcast
+
+    @State private var attemptedLocalOpen = false
+    @State private var handoffActivity: NSUserActivity?
+    @State private var status = "Opening YouTube…"
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Image(systemName: "play.rectangle.fill")
+                .font(.system(size: 72))
+
+            Text(broadcast.title)
+                .font(.title)
+                .multilineTextAlignment(.center)
+
+            Text(status)
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            Button("Try YouTube Again") {
+                Task { await openYouTube() }
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(60)
+        .task {
+            guard !attemptedLocalOpen else { return }
+            attemptedLocalOpen = true
+            await openYouTube()
+        }
+        .onDisappear {
+            handoffActivity?.invalidate()
+        }
+    }
+
+    @MainActor
+    private func openYouTube() async {
+        handoffActivity?.invalidate()
+        handoffActivity = nil
+        status = "Opening YouTube…"
+
+        let opened = await withCheckedContinuation { continuation in
+            UIApplication.shared.open(
+                broadcast.sourceURL,
+                options: [.universalLinksOnly: true]
+            ) { success in
+                continuation.resume(returning: success)
+            }
+        }
+
+        guard !opened else { return }
+
+        let activity = NSUserActivity(activityType: "com.sighmon.SpaceXTV.watchYouTube")
+        activity.title = broadcast.title
+        activity.webpageURL = broadcast.sourceURL
+        activity.isEligibleForHandoff = true
+        activity.becomeCurrent()
+        handoffActivity = activity
+        status = "YouTube is not installed on this device."
     }
 }

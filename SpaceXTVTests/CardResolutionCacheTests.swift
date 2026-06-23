@@ -185,6 +185,47 @@ final class CardResolutionCacheTests: XCTestCase {
         XCTAssertEqual(selection?.fallback, mp4)
     }
 
+    func testPagePlaybackUsesMP4WhenHLSIsUnavailable() throws {
+        let body = """
+        <video src="https://video.twimg.com/archive/high.mp4?tag=12"></video>
+        """
+
+        let streamURL = try BroadcastResolver().playbackURL(inPageBody: body)
+
+        XCTAssertEqual(streamURL?.absoluteString, "https://video.twimg.com/archive/high.mp4?tag=12")
+    }
+
+    func testPagePlaybackStillPrefersHLSOverMP4() throws {
+        let body = """
+        <video src="https://video.twimg.com/archive/high.mp4"></video>
+        <script>const stream = "https://video.pscp.tv/archive/master.m3u8?token=abc";</script>
+        """
+
+        let streamURL = try BroadcastResolver().playbackURL(inPageBody: body)
+
+        XCTAssertEqual(streamURL?.absoluteString, "https://video.pscp.tv/archive/master.m3u8?token=abc")
+    }
+
+    func testSpaceXYouTubeWebcastCreatesWatchURL() {
+        let webcast = SpaceXWebcast(
+            videoId: "gjCSJIAKEPM",
+            streamingVideoType: "youtube"
+        )
+
+        XCTAssertEqual(webcast.sourceKind, .youtube)
+        XCTAssertEqual(webcast.url?.absoluteString, "https://www.youtube.com/watch?v=gjCSJIAKEPM")
+    }
+
+    func testSpaceXXWebcastStillCreatesBroadcastURL() {
+        let webcast = SpaceXWebcast(
+            videoId: "1YpK2V5M6Q",
+            streamingVideoType: "x.com"
+        )
+
+        XCTAssertEqual(webcast.sourceKind, .xBroadcast)
+        XCTAssertEqual(webcast.url?.absoluteString, "https://x.com/i/broadcasts/1YpK2V5M6Q")
+    }
+
     @MainActor
     func testLoadMoreRequiresBearerTokenMode() {
         let broadcast = Broadcast(

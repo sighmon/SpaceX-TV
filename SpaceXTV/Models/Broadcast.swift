@@ -4,6 +4,7 @@ struct Broadcast: Identifiable, Hashable, Codable {
     enum SourceKind: String, Codable {
         case xBroadcast
         case hls
+        case youtube
     }
 
     enum ContentKind: String, Codable {

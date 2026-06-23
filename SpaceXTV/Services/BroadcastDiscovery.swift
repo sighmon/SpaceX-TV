@@ -771,7 +771,8 @@ struct BroadcastDiscovery {
 
         return flightTestTiles.map { tile in
             let mission = missionsByLink[tile.link]
-            let broadcastURL = mission?.xBroadcastURL ?? tile.sourceURL
+            let webcast = mission?.preferredWebcast
+            let broadcastURL = webcast?.url ?? tile.sourceURL
             return BroadcastCandidate(
                 statusURL: broadcastURL,
                 dedupeKey: "spacex-starship-flight-test:\(tile.starshipFlightTestKey)",
@@ -781,8 +782,8 @@ struct BroadcastDiscovery {
                 tweetText: mission?.summary ?? tile.description,
                 publishedAt: tile.publishedAt,
                 thumbnailURL: mission?.imageURL ?? tile.imageURL,
-                allowsDeferredStreamResolution: mission?.xBroadcastURL != nil,
-                sourceKind: .xBroadcast,
+                allowsDeferredStreamResolution: webcast?.sourceKind == .xBroadcast,
+                sourceKind: webcast?.sourceKind ?? .xBroadcast,
                 artworkName: "play.tv",
                 isAppendedSpaceXContent: true
             )
@@ -1722,10 +1723,9 @@ private struct SpaceXStarshipMission: Decodable {
     var webcasts: [SpaceXWebcast]?
     var paragraphs: [SpaceXParagraph]?
 
-    var xBroadcastURL: URL? {
-        webcasts?
-            .first { $0.streamingVideoType == "x.com" }?
-            .xBroadcastURL
+    var preferredWebcast: SpaceXWebcast? {
+        webcasts?.first { $0.sourceKind == .xBroadcast }
+            ?? webcasts?.first { $0.sourceKind == .youtube }
     }
 
     var imageURL: URL? {
@@ -1739,13 +1739,31 @@ private struct SpaceXStarshipMission: Decodable {
     }
 }
 
-private struct SpaceXWebcast: Decodable {
+struct SpaceXWebcast: Decodable {
     var videoId: String?
     var streamingVideoType: String?
 
-    var xBroadcastURL: URL? {
+    var sourceKind: Broadcast.SourceKind? {
+        switch streamingVideoType?.lowercased() {
+        case "x.com":
+            .xBroadcast
+        case "youtube":
+            .youtube
+        default:
+            nil
+        }
+    }
+
+    var url: URL? {
         guard let videoId, !videoId.isEmpty else { return nil }
-        return URL(string: "https://x.com/i/broadcasts/\(videoId)")
+        switch sourceKind {
+        case .xBroadcast:
+            return URL(string: "https://x.com/i/broadcasts/\(videoId)")
+        case .youtube:
+            return URL(string: "https://www.youtube.com/watch?v=\(videoId)")
+        default:
+            return nil
+        }
     }
 }
 
