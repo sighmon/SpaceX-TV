@@ -165,6 +165,37 @@ final class CardResolutionCacheTests: XCTestCase {
         XCTAssertNotEqual(discovery.mediaFingerprint(first), discovery.mediaFingerprint(updated))
     }
 
+    func testDuplicateXCardsChooseNewestPostEvenWhenBroadcastIDsDiffer() {
+        let discovery = BroadcastDiscovery()
+        let older = makeXBroadcastCandidate(
+            postID: "older",
+            broadcastID: "first-stream",
+            publishedAt: checkedAt
+        )
+        let newer = makeXBroadcastCandidate(
+            postID: "newer",
+            broadcastID: "replacement-stream",
+            publishedAt: checkedAt.addingTimeInterval(60)
+        )
+
+        let candidates = discovery.deduplicatedXCandidates([older, newer])
+
+        XCTAssertEqual(candidates.count, 1)
+        XCTAssertEqual(candidates.first?.originalPostID, "newer")
+        XCTAssertEqual(candidates.first?.statusURL.absoluteString, "https://x.com/i/broadcasts/replacement-stream")
+    }
+
+    func testDuplicateXCardsKeepFirstWhenDatesAreUnavailable() {
+        let discovery = BroadcastDiscovery()
+        let first = makeXBroadcastCandidate(postID: "first", broadcastID: "first-stream", publishedAt: nil)
+        let second = makeXBroadcastCandidate(postID: "second", broadcastID: "second-stream", publishedAt: nil)
+
+        let candidates = discovery.deduplicatedXCandidates([first, second])
+
+        XCTAssertEqual(candidates.count, 1)
+        XCTAssertEqual(candidates.first?.originalPostID, "first")
+    }
+
     func testSpaceXPlaybackPrefersMP4WithHLSFallback() {
         let mp4 = URL(string: "https://content.spacex.com/video.mp4")!
         let hls = URL(string: "https://content.spacex.com/video.m3u8")!
@@ -204,6 +235,25 @@ final class CardResolutionCacheTests: XCTestCase {
         let streamURL = try BroadcastResolver().playbackURL(inPageBody: body)
 
         XCTAssertEqual(streamURL?.absoluteString, "https://video.pscp.tv/archive/master.m3u8?token=abc")
+    }
+
+    func testDiscoversCurrentAndLegacyXWebScriptsWithGuestTokenFirst() {
+        let body = """
+        <link href="https://abs.twimg.com/x-web/x-web/assets/chunk-current.js">
+        <script src="https://abs.twimg.com/responsive-web/client-web/main.legacy.js"></script>
+        <link href="https://abs.twimg.com/x-web/x-web/assets/guest-token-current.js">
+        """
+
+        let urls = BroadcastResolver().webScriptURLs(in: body).map(\.absoluteString)
+
+        XCTAssertEqual(
+            urls,
+            [
+                "https://abs.twimg.com/x-web/x-web/assets/guest-token-current.js",
+                "https://abs.twimg.com/responsive-web/client-web/main.legacy.js",
+                "https://abs.twimg.com/x-web/x-web/assets/chunk-current.js",
+            ]
+        )
     }
 
     func testSpaceXYouTubeWebcastCreatesWatchURL() {
@@ -271,6 +321,21 @@ final class CardResolutionCacheTests: XCTestCase {
             width: 1920,
             height: 1080,
             altText: "Launch"
+        )
+    }
+
+    private func makeXBroadcastCandidate(postID: String, broadcastID: String, publishedAt: Date?) -> BroadcastCandidate {
+        BroadcastCandidate(
+            statusURL: URL(string: "https://x.com/i/broadcasts/\(broadcastID)")!,
+            dedupeKey: "broadcast:\(broadcastID)",
+            streamURL: nil,
+            title: "Launch of Falcon 9",
+            subtitle: "X broadcast link",
+            tweetText: "Launch of Falcon 9 https://t.co/\(postID)",
+            publishedAt: publishedAt,
+            allowsDeferredStreamResolution: true,
+            originalPostID: postID,
+            contentFingerprint: postID
         )
     }
 }

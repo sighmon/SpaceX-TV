@@ -418,7 +418,7 @@ struct BroadcastDiscovery {
             candidate(from: $0, timeline: timeline, isPinned: false, report: &report)
         }
 
-        return deduplicatedCandidates(pinnedCandidates + timelineCandidates)
+        return deduplicatedXCandidates(pinnedCandidates + timelineCandidates)
     }
 
     private func xAPITimeline(from response: XAPIPostsResponse) -> XAPITimeline {
@@ -669,6 +669,31 @@ struct BroadcastDiscovery {
     private func deduplicatedCandidates(_ candidates: [BroadcastCandidate]) -> [BroadcastCandidate] {
         var seen = Set<String>()
         return candidates.filter { seen.insert($0.dedupeKey).inserted }
+    }
+
+    func deduplicatedXCandidates(_ candidates: [BroadcastCandidate]) -> [BroadcastCandidate] {
+        var result: [BroadcastCandidate] = []
+        var indexByKey: [String: Int] = [:]
+
+        for candidate in candidates {
+            let keys = candidate.xCardDuplicateKeys
+            guard let existingIndex = keys.compactMap({ indexByKey[$0] }).first else {
+                let newIndex = result.count
+                keys.forEach { indexByKey[$0] = newIndex }
+                result.append(candidate)
+                continue
+            }
+
+            let existing = result[existingIndex]
+            if let candidateDate = candidate.publishedAt,
+               let existingDate = existing.publishedAt,
+               candidateDate > existingDate {
+                result[existingIndex] = candidate
+            }
+            keys.forEach { indexByKey[$0] = existingIndex }
+        }
+
+        return result
     }
 
     private func recentStarshipFilmCandidates(
@@ -1081,6 +1106,24 @@ struct BroadcastCandidate {
         self.isAppendedSpaceXContent = isAppendedSpaceXContent
         self.originalPostID = originalPostID
         self.contentFingerprint = contentFingerprint
+    }
+}
+
+private extension BroadcastCandidate {
+    var xCardDuplicateKeys: [String] {
+        guard streamURL != nil || allowsDeferredStreamResolution else {
+            return [dedupeKey]
+        }
+
+        let normalizedTitle = title
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+            .lowercased()
+
+        guard !normalizedTitle.isEmpty, normalizedTitle != "spacex broadcast" else {
+            return [dedupeKey]
+        }
+        return [dedupeKey, "x-card-title:\(normalizedTitle)"]
     }
 }
 

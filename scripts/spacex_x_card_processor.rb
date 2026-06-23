@@ -380,8 +380,18 @@ class SpaceXXCardProcessor
   end
 
   def web_script_urls(body)
-    body.scan(%r{https://abs\.twimg\.com/responsive-web/client-web/[^"'<>\s]+\.js}).uniq.sort_by do |url|
-      [File.basename(URI(url).path).start_with?("main.") ? 0 : 1, url]
+    body.scan(
+      %r{https://abs\.twimg\.com/(?:responsive-web/client-web|x-web/x-web/assets)/[^"'<>\s]+\.js}
+    ).uniq.sort_by do |url|
+      filename = File.basename(URI(url).path)
+      priority = if filename.start_with?("guest-token-")
+        0
+      elsif filename.start_with?("main.")
+        1
+      else
+        2
+      end
+      [priority, url]
     end
   end
 

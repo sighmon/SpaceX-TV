@@ -78,6 +78,24 @@ class SpaceXXCardProcessorTest < Minitest::Test
     assert_equal "https://pbs.twimg.com/card.jpg", processor.send(:page_thumbnail, body)
   end
 
+  def test_discovers_current_and_legacy_x_web_scripts_with_guest_token_first
+    processor = StubProcessor.new(now: NOW)
+    body = <<~HTML
+      <link href="https://abs.twimg.com/x-web/x-web/assets/chunk-current.js">
+      <script src="https://abs.twimg.com/responsive-web/client-web/main.legacy.js"></script>
+      <link href="https://abs.twimg.com/x-web/x-web/assets/guest-token-current.js">
+    HTML
+
+    assert_equal(
+      [
+        "https://abs.twimg.com/x-web/x-web/assets/guest-token-current.js",
+        "https://abs.twimg.com/responsive-web/client-web/main.legacy.js",
+        "https://abs.twimg.com/x-web/x-web/assets/chunk-current.js"
+      ],
+      processor.send(:web_script_urls, body)
+    )
+  end
+
   private
 
   def response

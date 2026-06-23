@@ -388,8 +388,8 @@ struct BroadcastResolver {
         return body
     }
 
-    private func webScriptURLs(in body: String) -> [URL] {
-        let pattern = #"https:\/\/abs\.twimg\.com\/responsive-web\/client-web\/[^"'<>\s]+\.js"#
+    func webScriptURLs(in body: String) -> [URL] {
+        let pattern = #"https:\/\/abs\.twimg\.com\/(?:responsive-web\/client-web|x-web\/x-web\/assets)\/[^"'<>\s]+\.js"#
         let regex = try? NSRegularExpression(pattern: pattern)
         let range = NSRange(body.startIndex ..< body.endIndex, in: body)
         let matches = regex?.matches(in: body, range: range) ?? []
@@ -403,13 +403,23 @@ struct BroadcastResolver {
         }
 
         return urls.sorted { lhs, rhs in
-            let lhsIsMain = lhs.lastPathComponent.hasPrefix("main.")
-            let rhsIsMain = rhs.lastPathComponent.hasPrefix("main.")
-            if lhsIsMain != rhsIsMain {
-                return lhsIsMain
+            let lhsPriority = webScriptPriority(lhs)
+            let rhsPriority = webScriptPriority(rhs)
+            if lhsPriority != rhsPriority {
+                return lhsPriority < rhsPriority
             }
             return lhs.absoluteString < rhs.absoluteString
         }
+    }
+
+    private func webScriptPriority(_ url: URL) -> Int {
+        if url.lastPathComponent.hasPrefix("guest-token-") {
+            return 0
+        }
+        if url.lastPathComponent.hasPrefix("main.") {
+            return 1
+        }
+        return 2
     }
 
     private func webBearerToken(in body: String) -> String? {
