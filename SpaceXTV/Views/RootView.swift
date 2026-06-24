@@ -92,16 +92,16 @@ private struct YouTubeLaunchScreen: View {
         handoffActivity = nil
         status = "Opening YouTube…"
 
-        let opened = await withCheckedContinuation { continuation in
-            UIApplication.shared.open(
-                broadcast.sourceURL,
-                options: [.universalLinksOnly: true]
-            ) { success in
-                continuation.resume(returning: success)
+        for url in youtubeAppURLs {
+            guard UIApplication.shared.canOpenURL(url) else { continue }
+            if await open(url) {
+                return
             }
         }
 
-        guard !opened else { return }
+        if await open(broadcast.sourceURL, options: [.universalLinksOnly: true]) {
+            return
+        }
 
         let activity = NSUserActivity(activityType: "com.sighmon.SpaceXTV.watchYouTube")
         activity.title = broadcast.title
@@ -110,5 +110,44 @@ private struct YouTubeLaunchScreen: View {
         activity.becomeCurrent()
         handoffActivity = activity
         status = "YouTube is not installed on this device."
+    }
+
+    private var youtubeAppURLs: [URL] {
+        guard let videoID = broadcast.sourceURL.youtubeVideoID else { return [] }
+
+        return [
+            URL(string: "youtube://www.youtube.com/watch?v=\(videoID)"),
+            URL(string: "youtube://watch?v=\(videoID)"),
+            URL(string: "vnd.youtube://\(videoID)")
+        ].compactMap { $0 }
+    }
+
+    @MainActor
+    private func open(
+        _ url: URL,
+        options: [UIApplication.OpenExternalURLOptionsKey: Any] = [:]
+    ) async -> Bool {
+        await withCheckedContinuation { continuation in
+            UIApplication.shared.open(url, options: options) { success in
+                continuation.resume(returning: success)
+            }
+        }
+    }
+}
+
+private extension URL {
+    var youtubeVideoID: String? {
+        if host?.lowercased() == "youtu.be" {
+            return pathComponents.dropFirst().first
+        }
+
+        guard host?.lowercased().contains("youtube.com") == true else {
+            return nil
+        }
+
+        return URLComponents(url: self, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first { $0.name == "v" }?
+            .value
     }
 }

@@ -6,6 +6,11 @@
 	<array>
 		<string>com.sighmon.SpaceXTV.watchYouTube</string>
 	</array>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>youtube</string>
+		<string>vnd.youtube</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
