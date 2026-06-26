@@ -120,12 +120,12 @@ struct BroadcastBrowserView: View {
     private func header(width: CGFloat) -> some View {
         HStack(alignment: .center, spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
-                Image("SpaceX")
-                    .renderingMode(.template)
-                    .resizable()
-                    .scaledToFit()
-                    .foregroundStyle(.white)
-                    .frame(width: logoWidth(for: width), alignment: .leading)
+//                Image("SpaceX")
+//                    .renderingMode(.template)
+//                    .resizable()
+//                    .scaledToFit()
+//                    .foregroundStyle(.white)
+//                    .frame(width: logoWidth(for: width), alignment: .leading)
             }
 
             Spacer(minLength: 32)
