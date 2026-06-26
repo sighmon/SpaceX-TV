@@ -103,3 +103,8 @@ Command-line build:
 ```sh
 xcodebuild -project SpaceXTV.xcodeproj -target SpaceXTV -sdk appletvsimulator build
 ```
+
+## Privacy policy
+
+This app collects no personal data.
+
