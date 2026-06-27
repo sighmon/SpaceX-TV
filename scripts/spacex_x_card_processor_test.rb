@@ -32,6 +32,7 @@ class SpaceXXCardProcessorTest < Minitest::Test
     assert_nil entries.fetch("post:gallery").fetch("expiresAt")
     assert_equal "https://video.pscp.tv/replay.m3u8", entries.fetch("post:broadcast").fetch("streamURL")
     assert_equal false, entries.fetch("post:broadcast").fetch("isLive")
+    assert_equal "https://video.twimg.com/repost-high.mp4", entries.fetch("post:repost").fetch("streamURL")
     assert_equal false, entries.fetch("post:plain").fetch("hasUsableContent")
   end
 
@@ -104,6 +105,7 @@ class SpaceXXCardProcessorTest < Minitest::Test
         post("video", media_keys: ["video-media"]),
         post("gallery", media_keys: ["photo-media"]),
         post("broadcast", url: "https://x.com/i/broadcasts/abc123"),
+        post("repost", referenced_tweets: [{ "type" => "retweeted", "id" => "reposted-video" }]),
         post("plain")
       ],
       "includes" => {
@@ -123,19 +125,31 @@ class SpaceXXCardProcessorTest < Minitest::Test
             "url" => "https://pbs.twimg.com/media/photo.jpg?format=jpg&name=small",
             "width" => 1600,
             "height" => 900
+          },
+          {
+            "media_key" => "repost-video-media",
+            "type" => "video",
+            "preview_image_url" => "https://pbs.twimg.com/repost-video.jpg",
+            "variants" => [
+              { "bit_rate" => 832_000, "content_type" => "video/mp4", "url" => "https://video.twimg.com/repost-high.mp4" }
+            ]
           }
+        ],
+        "tweets" => [
+          post("reposted-video", media_keys: ["repost-video-media"])
         ]
       }
     }
   end
 
-  def post(id, media_keys: nil, url: nil)
+  def post(id, media_keys: nil, url: nil, referenced_tweets: nil)
     value = {
       "id" => id,
       "text" => "Post #{id}",
       "created_at" => "2026-06-12T00:00:00.000Z"
     }
     value["attachments"] = { "media_keys" => media_keys } if media_keys
+    value["referenced_tweets"] = referenced_tweets if referenced_tweets
     if url
       value["entities"] = {
         "urls" => [{ "expanded_url" => url }]

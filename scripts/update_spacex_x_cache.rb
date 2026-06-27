@@ -56,7 +56,7 @@ begin
   pinned_tweet_id = user.fetch("data")["pinned_tweet_id"]
 
   timeline = get_json(
-    "https://api.x.com/2/users/#{user_id}/tweets?max_results=25&#{COMMON_POST_QUERY}&exclude=retweets,replies",
+    "https://api.x.com/2/users/#{user_id}/tweets?max_results=25&#{COMMON_POST_QUERY}&exclude=replies",
     bearer_token: TOKEN
   )
 

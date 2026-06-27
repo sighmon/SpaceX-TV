@@ -78,16 +78,17 @@ class SpaceXXCardProcessor
   private
 
   def process_post(post, media_by_key:, posts_by_id:)
-    quoted_post = quoted_post_for(post, posts_by_id)
+    referenced_content = referenced_content_for(post, posts_by_id)
+    referenced_post = referenced_content[:post]
     own_media = media_for(post, media_by_key)
-    quoted_media = quoted_post ? media_for(quoted_post, media_by_key) : []
-    selected_media = own_media.empty? ? quoted_media : own_media
-    linked_broadcast_url = broadcast_url(post)
+    referenced_media = referenced_post ? media_for(referenced_post, media_by_key) : []
+    selected_media = own_media.empty? ? referenced_media : own_media
+    linked_broadcast_url = broadcast_url(post) || broadcast_url(referenced_post)
     fingerprint = content_fingerprint(
       post,
       media: selected_media,
-      quoted_post: quoted_post,
-      quoted_media: quoted_media,
+      referenced_content: referenced_content,
+      referenced_media: referenced_media,
       linked_broadcast_url: linked_broadcast_url
     )
     key = "post:#{post.fetch("id")}"
@@ -98,7 +99,7 @@ class SpaceXXCardProcessor
     end
 
     thumbnail_url = selected_media.filter_map { |media| media["preview_image_url"] || media["url"] }.first ||
-      entity_thumbnail_url(post) || entity_thumbnail_url(quoted_post)
+      entity_thumbnail_url(post) || entity_thumbnail_url(referenced_post)
     variant = best_variant(selected_media)
     if variant
       return card_entry(
@@ -178,9 +179,12 @@ class SpaceXXCardProcessor
     }
   end
 
-  def quoted_post_for(post, posts_by_id)
-    quoted_id = Array(post["referenced_tweets"]).find { |reference| reference["type"] == "quoted" }&.fetch("id", nil)
-    quoted_id && posts_by_id[quoted_id]
+  def referenced_content_for(post, posts_by_id)
+    reference = Array(post["referenced_tweets"]).find { |item| ["quoted", "retweeted"].include?(item["type"]) }
+    {
+      reference: reference,
+      post: reference && posts_by_id[reference["id"]]
+    }
   end
 
   def media_for(post, media_by_key)
@@ -230,6 +234,8 @@ class SpaceXXCardProcessor
   end
 
   def broadcast_url(post)
+    return unless post
+
     Array(post.dig("entities", "urls")).filter_map do |url|
       value = url["unwound_url"] || url["expanded_url"] || url["url"]
       next unless value
@@ -254,7 +260,7 @@ class SpaceXXCardProcessor
       &.fetch("url", nil)
   end
 
-  def content_fingerprint(post, media:, quoted_post:, quoted_media:, linked_broadcast_url:)
+  def content_fingerprint(post, media:, referenced_content:, referenced_media:, linked_broadcast_url:)
     parts = ["id:#{post.fetch("id")}"]
     text = post["text"].to_s.strip
     parts << "t:#{text}" unless text.empty?
@@ -262,11 +268,11 @@ class SpaceXXCardProcessor
     parts << "lnk:#{linked_broadcast_url}" if linked_broadcast_url
     own = media.map { |item| media_fingerprint(item) }.sort
     parts << "m:#{own.join(",")}" unless own.empty?
-    if quoted_post
-      parts << "q:#{quoted_post.fetch("id")}"
+    if (reference = referenced_content[:reference])
+      parts << "r:#{reference["type"]}:#{reference["id"]}"
     end
-    quoted = quoted_media.map { |item| media_fingerprint(item) }.sort
-    parts << "qm:#{quoted.join(",")}" unless quoted.empty?
+    referenced = referenced_media.map { |item| media_fingerprint(item) }.sort
+    parts << "rm:#{referenced.join(",")}" unless referenced.empty?
     parts.join("|")
   end
 

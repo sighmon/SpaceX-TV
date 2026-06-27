@@ -441,16 +441,18 @@ struct BroadcastDiscovery {
         guard let statusURL = URL(string: "https://x.com/spacex/status/\(post.id)") else {
             return nil
         }
-        let linkedBroadcastURL = post.broadcastURLFromEntities
+        let referencedContentPost = post.referencedContentTweetID.flatMap { timeline.includedPostsByID[$0] }
+        let linkedBroadcastURL = post.broadcastURLFromEntities ?? referencedContentPost?.broadcastURLFromEntities
 
         let ownMedia = mediaObjects(from: post, mediaByKey: timeline.mediaByKey)
-        let quotedPost = post.quotedTweetID.flatMap { timeline.includedPostsByID[$0] }
-        let quotedMedia = quotedPost.map { mediaObjects(from: $0, mediaByKey: timeline.mediaByKey) } ?? []
-        let media = ownMedia.isEmpty ? quotedMedia : ownMedia
-        let mediaSource = ownMedia.isEmpty && !quotedMedia.isEmpty ? "quoted status \(quotedPost?.id ?? "")" : "status"
+        let referencedContentMedia = referencedContentPost.map { mediaObjects(from: $0, mediaByKey: timeline.mediaByKey) } ?? []
+        let media = ownMedia.isEmpty ? referencedContentMedia : ownMedia
+        let mediaSource = ownMedia.isEmpty && !referencedContentMedia.isEmpty
+            ? "\(post.referencedContentTweetType ?? "referenced") status \(referencedContentPost?.id ?? "")"
+            : "status"
         let variant = bestVariant(from: media)
         let galleryImages = galleryImages(from: media)
-        let thumbnailURL = media.compactMap(\.thumbnailURL).first ?? galleryImages.first?.url ?? post.thumbnailURLFromEntities ?? quotedPost?.thumbnailURLFromEntities
+        let thumbnailURL = media.compactMap(\.thumbnailURL).first ?? galleryImages.first?.url ?? post.thumbnailURLFromEntities ?? referencedContentPost?.thumbnailURLFromEntities
 
         logVideoVariants(for: post.id, media: media, selectedVariant: variant, report: &report)
         if let variant {
@@ -462,8 +464,8 @@ struct BroadcastDiscovery {
         } else {
             report.add("No API media variant for \(post.id); will page-probe")
         }
-        if let quotedTweetID = post.quotedTweetID {
-            report.add("Quoted status for \(post.id): \(quotedTweetID), media objects \(quotedMedia.count)")
+        if let referencedContentTweetID = post.referencedContentTweetID {
+            report.add("\(post.referencedContentTweetType ?? "Referenced") status for \(post.id): \(referencedContentTweetID), media objects \(referencedContentMedia.count)")
         }
         report.add("Thumbnail for \(post.id): \(thumbnailURL == nil ? "missing" : "present"), media objects \(media.count), URL images \(post.urlImageCount)")
 
@@ -471,8 +473,8 @@ struct BroadcastDiscovery {
         let fp = contentFingerprint(
             post: post,
             media: media,
-            quotedPost: quotedPost,
-            quotedMedia: quotedMedia,
+            referencedContentPost: referencedContentPost,
+            referencedContentMedia: referencedContentMedia,
             linkedBroadcastURL: linkedBroadcastURL
         )
         return BroadcastCandidate(
@@ -483,7 +485,7 @@ struct BroadcastDiscovery {
                 linkedBroadcastURL: linkedBroadcastURL,
                 variant: variant,
                 galleryImages: galleryImages,
-                quotedPostID: quotedPost?.id
+                referencedContentPostID: referencedContentPost?.id
             ),
             streamURL: variant?.url,
             title: post.broadcastTitle,
@@ -538,7 +540,7 @@ struct BroadcastDiscovery {
         linkedBroadcastURL: URL?,
         variant: XAPIMediaVariant?,
         galleryImages: [GalleryImage],
-        quotedPostID: String?
+        referencedContentPostID: String?
     ) -> String {
         if let linkedBroadcastURL,
            let broadcastID = xBroadcastID(from: linkedBroadcastURL) {
@@ -550,7 +552,7 @@ struct BroadcastDiscovery {
         }
 
         if !galleryImages.isEmpty {
-            return "gallery:\(quotedPostID ?? post.id)"
+            return "gallery:\(referencedContentPostID ?? post.id)"
         }
 
         if let normalizedText = post.text?
@@ -566,11 +568,11 @@ struct BroadcastDiscovery {
     private func contentFingerprint(
         post: XAPIPost,
         media: [XAPIMedia],
-        quotedPost: XAPIPost?,
-        quotedMedia: [XAPIMedia],
+        referencedContentPost: XAPIPost?,
+        referencedContentMedia: [XAPIMedia],
         linkedBroadcastURL: URL?
     ) -> String {
-        // Stable string describing the parts of the post (and quoted post) that affect
+        // Stable string describing the parts of the post (and referenced content post) that affect
         // whether this is a gallery, has a direct stream variant, links to a broadcast,
         // or changes the text-based dedupe. If this changes we must re-probe / re-classify.
         var parts: [String] = ["id:\(post.id)"]
@@ -587,12 +589,12 @@ struct BroadcastDiscovery {
         if !own.isEmpty {
             parts.append("m:\(own.joined(separator: ","))")
         }
-        if let qid = post.quotedTweetID {
-            parts.append("q:\(qid)")
+        if let referencedContent = post.referencedContentTweet {
+            parts.append("r:\(referencedContent.type):\(referencedContent.id)")
         }
-        let qm = quotedMedia.map(mediaFingerprint).sorted()
-        if !qm.isEmpty {
-            parts.append("qm:\(qm.joined(separator: ","))")
+        let referencedMedia = referencedContentMedia.map(mediaFingerprint).sorted()
+        if !referencedMedia.isEmpty {
+            parts.append("rm:\(referencedMedia.joined(separator: ","))")
         }
         return parts.joined(separator: "|")
     }
@@ -918,7 +920,7 @@ struct BroadcastDiscovery {
             URLQueryItem(name: "tweet.fields", value: "created_at,entities,attachments,referenced_tweets"),
             URLQueryItem(name: "expansions", value: "attachments.media_keys,referenced_tweets.id,referenced_tweets.id.attachments.media_keys"),
             URLQueryItem(name: "media.fields", value: "type,variants,preview_image_url,url,width,height,media_key,alt_text"),
-            URLQueryItem(name: "exclude", value: "retweets,replies"),
+            URLQueryItem(name: "exclude", value: "replies"),
         ]
 
         guard let url = components.url else {
@@ -1382,8 +1384,16 @@ private struct XAPIPost: Decodable {
     var attachments: XAPIPostAttachments?
     var referencedTweets: [XAPIReferencedTweet]?
 
-    var quotedTweetID: String? {
-        referencedTweets?.first { $0.type == "quoted" }?.id
+    var referencedContentTweet: XAPIReferencedTweet? {
+        referencedTweets?.first { $0.type == "quoted" || $0.type == "retweeted" }
+    }
+
+    var referencedContentTweetID: String? {
+        referencedContentTweet?.id
+    }
+
+    var referencedContentTweetType: String? {
+        referencedContentTweet?.type
     }
 
     var broadcastURLFromEntities: URL? {
