@@ -359,6 +359,7 @@ struct BroadcastBrowserView: View {
         } label: {
             BroadcastCard(broadcast: broadcast, isFocused: focusedID == broadcast.id)
                 .frame(width: width)
+                .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()
