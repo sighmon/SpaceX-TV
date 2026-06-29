@@ -41,6 +41,11 @@ final class BroadcastLibrary: ObservableObject {
             defaults.set(showsNextLaunchCountdown, forKey: Keys.showsNextLaunchCountdown)
         }
     }
+    @Published var showsSpaceXLogos: Bool {
+        didSet {
+            defaults.set(showsSpaceXLogos, forKey: Keys.showsSpaceXLogos)
+        }
+    }
     @Published var prefersMP4Playback: Bool {
         didSet {
             defaults.set(prefersMP4Playback, forKey: Keys.prefersMP4Playback)
@@ -94,6 +99,7 @@ final class BroadcastLibrary: ObservableObject {
         self.usesXAPIBearerToken = defaults.bool(forKey: Keys.usesXAPIBearerToken)
         self.showsPlayerDebugOverlay = defaults.bool(forKey: Keys.showsPlayerDebugOverlay)
         self.showsNextLaunchCountdown = defaults.object(forKey: Keys.showsNextLaunchCountdown) as? Bool ?? true
+        self.showsSpaceXLogos = defaults.object(forKey: Keys.showsSpaceXLogos) as? Bool ?? false
         self.prefersMP4Playback = defaults.object(forKey: Keys.prefersMP4Playback) as? Bool ?? false
 
         if let data = defaults.data(forKey: Keys.cardResolutionCache),
@@ -125,6 +131,7 @@ final class BroadcastLibrary: ObservableObject {
         self.usesXAPIBearerToken = false
         self.showsPlayerDebugOverlay = false
         self.showsNextLaunchCountdown = true
+        self.showsSpaceXLogos = false
         self.prefersMP4Playback = false
         self.cardResolutionCache = CardResolutionCache()
         self.loadingState = .loaded
@@ -344,6 +351,7 @@ private enum Keys {
     static let usesXAPIBearerToken = "usesXAPIBearerToken"
     static let showsPlayerDebugOverlay = "showsPlayerDebugOverlay"
     static let showsNextLaunchCountdown = "showsNextLaunchCountdown"
+    static let showsSpaceXLogos = "showsSpaceXLogos"
     static let prefersMP4Playback = "prefersMP4Playback"
     static let dailyCache = "dailyBroadcastCache"
     static let cardResolutionCache = "cardResolutionCache"

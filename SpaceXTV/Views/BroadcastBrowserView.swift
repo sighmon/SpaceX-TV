@@ -10,9 +10,22 @@ struct BroadcastBrowserView: View {
     @State private var nextLaunchError: String?
     @State private var isLoadingNextLaunch = false
     @State private var showsHomeFooter = false
+    @State private var paranoidTapCount = 0
+    @FocusState private var focusedHeaderControl: HeaderControl?
     @FocusState private var focusedID: Broadcast.ID?
     private let launchScheduleService = SpaceXLaunchScheduleService()
     private let loadsNextLaunch: Bool
+    private let spaceXLogoAspectRatio: CGFloat = 1
+#if os(tvOS)
+    private let headerControlHeight: CGFloat = 76
+#else
+    private let headerControlHeight: CGFloat = 68
+#endif
+
+    private enum HeaderControl: Hashable {
+        case settings
+        case refresh
+    }
 
     init(
         selectedBroadcast: Binding<Broadcast?>,
@@ -71,17 +84,24 @@ struct BroadcastBrowserView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         header(width: contentWidth)
+                            .frame(width: contentWidth, alignment: .leading)
+                            .frame(minHeight: headerContentHeight(for: screenWidth), alignment: .leading)
                             .padding(.bottom, headerBottomSpacing(for: screenWidth))
+                            .zIndex(1)
+
                         countdown(width: contentWidth)
                             .padding(.bottom, verticalSpacing(for: screenWidth))
+                            .zIndex(0)
                         content(width: contentWidth)
+                            .zIndex(0)
                         if hasLoadedCards || showsHomeFooter {
                             homeFooter(width: contentWidth)
                                 .opacity(showsHomeFooter ? 1 : 0)
                                 .padding(.top, footerTopSpacing(for: screenWidth))
+                                .zIndex(0)
                         }
                     }
-                    .frame(width: contentWidth, alignment: .leading)
+                        .frame(width: contentWidth, alignment: .leading)
                     .padding(.horizontal, horizontalPadding)
                     .padding(.vertical, verticalPadding(for: screenWidth))
                 }
@@ -120,47 +140,54 @@ struct BroadcastBrowserView: View {
     private func header(width: CGFloat) -> some View {
         HStack(alignment: .center, spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
-//                Image("SpaceX")
-//                    .renderingMode(.template)
-//                    .resizable()
-//                    .scaledToFit()
-//                    .foregroundStyle(.white)
-//                    .frame(width: logoWidth(for: width), alignment: .leading)
+                if library.showsSpaceXLogos {
+                    Image("SpaceX")
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .foregroundStyle(.white)
+                        .frame(
+                            width: logoWidth(for: width),
+                            height: logoHeight(for: width),
+                            alignment: .leading
+                        )
+                }
             }
 
             Spacer(minLength: 32)
 
             HStack(spacing: 14) {
-                Button {
+                headerButton(systemImage: "gear", control: .settings) {
                     showsSettings = true
-                } label: {
-                    Image(systemName: "gear")
-#if os(tvOS)
-                        .font(.system(size: 38, weight: .semibold))
-#else
-                        .font(.system(size: 30, weight: .semibold))
-#endif
-                        .frame(width: 58, height: 58)
                 }
-                .buttonStyle(.bordered)
 
-                Button {
+                headerButton(systemImage: "arrow.clockwise", control: .refresh) {
                     Task {
                         await library.refresh()
                         await loadNextLaunch()
                     }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-#if os(tvOS)
-                        .font(.system(size: 38, weight: .semibold))
-#else
-                        .font(.system(size: 30, weight: .semibold))
-#endif
-                        .frame(width: 58, height: 58)
                 }
-                .buttonStyle(.bordered)
             }
         }
+    }
+
+    private func headerButton(systemImage: String, control: HeaderControl, action: @escaping () -> Void) -> some View {
+        let isFocused = focusedHeaderControl == control
+
+        return Button(action: action) {
+            Image(systemName: systemImage)
+#if os(tvOS)
+                .font(.system(size: 38, weight: .semibold))
+#else
+                .font(.system(size: 30, weight: .semibold))
+#endif
+                .frame(width: 58, height: 58)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.bordered)
+        .focused($focusedHeaderControl, equals: control)
+        .scaleEffect(isFocused ? 1.06 : 1)
+        .animation(.easeOut(duration: 0.16), value: isFocused)
     }
 
     @ViewBuilder
@@ -379,15 +406,17 @@ struct BroadcastBrowserView: View {
 
     private func homeFooter(width: CGFloat) -> some View {
         VStack(spacing: 18) {
-            Image("SpaceX")
-                .renderingMode(.template)
-                .resizable()
-                .scaledToFit()
-                .foregroundStyle(.white.opacity(0.72))
-                .frame(width: footerLogoWidth(for: width))
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.leading, 50)
-                .opacity(0.58)
+            if library.showsSpaceXLogos {
+                Image("SpaceX")
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(.white.opacity(0.72))
+                    .frame(width: footerLogoWidth(for: width))
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.leading, 50)
+                    .opacity(0.58)
+            }
 
             Divider()
                 .overlay(.white.opacity(0.22))
@@ -399,6 +428,14 @@ struct BroadcastBrowserView: View {
                 .foregroundStyle(.white.opacity(0.58))
                 .frame(width: width, alignment: .center)
                 .padding(.top, 10)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    paranoidTapCount += 1
+                    if paranoidTapCount >= 10 {
+                        library.showsSpaceXLogos.toggle()
+                        paranoidTapCount = 0
+                    }
+                }
 
             Text(cacheFooterText)
                 .font(.caption.weight(.semibold))
@@ -461,6 +498,10 @@ struct BroadcastBrowserView: View {
         verticalSpacing(for: width) * 0.5
     }
 
+    private func headerContentHeight(for width: CGFloat) -> CGFloat {
+        max(headerControlHeight, library.showsSpaceXLogos ? logoHeight(for: width) : 0)
+    }
+
     private func footerTopSpacing(for width: CGFloat) -> CGFloat {
         width < 900 ? 42 : 64
     }
@@ -475,6 +516,10 @@ struct BroadcastBrowserView: View {
 
     private func logoWidth(for width: CGFloat) -> CGFloat {
         width < 700 ? 112 : 140
+    }
+
+    private func logoHeight(for width: CGFloat) -> CGFloat {
+        logoWidth(for: width) / spaceXLogoAspectRatio
     }
 
     private func footerLogoWidth(for width: CGFloat) -> CGFloat {
