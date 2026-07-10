@@ -39,25 +39,26 @@ struct SettingsView: View {
             .ignoresSafeArea()
 
             VStack(alignment: .leading, spacing: 34) {
-                VStack(alignment: .leading, spacing: 22) {
-                    Text("X API")
-                        .font(.title2.weight(.semibold))
+                if library.showsSpaceXLogos {
+                    VStack(alignment: .leading, spacing: 22) {
+                        Text("X API")
+                            .font(.title2.weight(.semibold))
 
-                    SecureField("Bearer Token", text: $library.xAPIBearerToken)
-                        .textContentType(.password)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 14)
-                        .background(.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(.white.opacity(tokenFocused ? 0.65 : 0.14), lineWidth: tokenFocused ? 3 : 1)
-                        }
-                        .focused($tokenFocused)
+                        SecureField("Bearer Token", text: $library.xAPIBearerToken)
+                            .textContentType(.password)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 14)
+                            .background(.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(.white.opacity(tokenFocused ? 0.65 : 0.14), lineWidth: tokenFocused ? 3 : 1)
+                            }
+                            .focused($tokenFocused)
 
-                    Toggle("Use your Bearer Token", isOn: $library.usesXAPIBearerToken)
-                        .font(.body.weight(.medium))
+                        Toggle("Use your Bearer Token", isOn: $library.usesXAPIBearerToken)
+                            .font(.body.weight(.medium))
 
 //                    Button {
 //                        Task { await library.refresh() }
@@ -66,12 +67,13 @@ struct SettingsView: View {
 //                            .font(.title3.weight(.semibold))
 //                    }
 
-                    Text(library.usesXAPIBearerToken ? "Using your token for X API timeline discovery." : "Using X API cache for timeline discovery.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                        Text(library.usesXAPIBearerToken ? "Using your token for X API timeline discovery." : "Using X API cache for timeline discovery.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(28)
+                    .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
                 }
-                .padding(28)
-                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
 
                 VStack(alignment: .leading, spacing: 18) {
                     Text("Settings")

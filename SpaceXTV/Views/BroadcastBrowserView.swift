@@ -422,21 +422,23 @@ struct BroadcastBrowserView: View {
             Divider()
                 .overlay(.white.opacity(0.22))
 
-            Text("ONLY THE PARANOID SURVIVE")
-                .font(.title2.weight(.bold))
-                .tracking(2.4)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.white.opacity(0.58))
-                .frame(width: width, alignment: .center)
-                .padding(.top, 10)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    paranoidTapCount += 1
-                    if paranoidTapCount >= 10 {
-                        library.showsSpaceXLogos.toggle()
-                        paranoidTapCount = 0
-                    }
+            Button {
+                paranoidTapCount += 1
+                if paranoidTapCount >= 10 {
+                    library.showsSpaceXLogos.toggle()
+                    paranoidTapCount = 0
                 }
+            } label: {
+                Text("ONLY THE PARANOID SURVIVE")
+                    .font(.title2.weight(.bold))
+                    .tracking(2.4)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.white.opacity(0.58))
+                    .frame(width: width, alignment: .center)
+                    .padding(.top, 10)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
 
             Text(cacheFooterText)
                 .font(.caption.weight(.semibold))
