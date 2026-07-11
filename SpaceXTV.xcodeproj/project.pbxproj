@@ -21,6 +21,7 @@
 		0A000001000000000000000B /* Views/GalleryScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A000001000000000000001B /* Views/GalleryScreen.swift */; };
 		0A000001000000000000000C /* Models/Launch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A000001000000000000001C /* Models/Launch.swift */; };
 		0A000001000000000000000D /* Services/SpaceXLaunchScheduleService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A000001000000000000001D /* Services/SpaceXLaunchScheduleService.swift */; };
+		0A000001000000000000000E /* Views/MediaCollectionScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A000001000000000000001E /* Views/MediaCollectionScreen.swift */; };
 		0B0000010000000000000001 /* CardResolutionCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B0000010000000000000011 /* CardResolutionCacheTests.swift */; };
 /* End PBXBuildFile section */
 
@@ -51,6 +52,7 @@
 		0A000001000000000000001B /* Views/GalleryScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/GalleryScreen.swift; sourceTree = "<group>"; };
 		0A000001000000000000001C /* Models/Launch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Launch.swift; sourceTree = "<group>"; };
 		0A000001000000000000001D /* Services/SpaceXLaunchScheduleService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/SpaceXLaunchScheduleService.swift; sourceTree = "<group>"; };
+		0A000001000000000000001E /* Views/MediaCollectionScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/MediaCollectionScreen.swift; sourceTree = "<group>"; };
 		0B0000010000000000000010 /* SpaceXTVTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SpaceXTVTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0B0000010000000000000011 /* CardResolutionCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardResolutionCacheTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -90,6 +92,7 @@
 				0A0000010000000000000017 /* Views/SettingsPanel.swift */,
 				0A0000010000000000000018 /* Views/PlayerScreen.swift */,
 				0A000001000000000000001B /* Views/GalleryScreen.swift */,
+				0A000001000000000000001E /* Views/MediaCollectionScreen.swift */,
 				053EB0B42FC18C9400512715 /* Media.xcassets */,
 			);
 			path = SpaceXTV;
@@ -238,6 +241,7 @@
 				0A0000010000000000000007 /* Views/SettingsPanel.swift in Sources */,
 				0A0000010000000000000008 /* Views/PlayerScreen.swift in Sources */,
 				0A000001000000000000000B /* Views/GalleryScreen.swift in Sources */,
+				0A000001000000000000000E /* Views/MediaCollectionScreen.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -269,7 +273,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 39;
+				CURRENT_PROJECT_VERSION = 40;
 				DEVELOPMENT_TEAM = 4P8S9W2NYL;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -305,7 +309,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 39;
+				CURRENT_PROJECT_VERSION = 40;
 				DEVELOPMENT_TEAM = 4P8S9W2NYL;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;

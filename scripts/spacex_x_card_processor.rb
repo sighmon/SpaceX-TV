@@ -5,7 +5,7 @@ require "time"
 require "uri"
 
 class SpaceXXCardProcessor
-  CACHE_VERSION = 3
+  CACHE_VERSION = 4
   REPLAY_TTL = 7 * 24 * 60 * 60
   LIVE_TTL = 15 * 60
   NEGATIVE_TTL = 25 * 60 * 60
@@ -100,12 +100,18 @@ class SpaceXXCardProcessor
 
     thumbnail_url = selected_media.filter_map { |media| media["preview_image_url"] || media["url"] }.first ||
       entity_thumbnail_url(post) || entity_thumbnail_url(referenced_post)
-    variant = best_variant(selected_media)
-    if variant
+    video_media = selected_media.select { |media| video_media?(media) }
+    photos = gallery_images(selected_media)
+    first_variant = video_media.empty? ? nil : best_variant([video_media.first])
+
+    # Multi-video / mixed posts still publish content_kind "video" so older app builds
+    # can decode processed_cards (they only know video|gallery). Newer app builds open a
+    # collection picker from the timeline media attachments themselves.
+    if first_variant
       return card_entry(
         fingerprint: fingerprint,
-        stream_url: variant["url"],
-        thumbnail_url: thumbnail_url,
+        stream_url: first_variant["url"],
+        thumbnail_url: thumbnail_url || photos.first&.dig("url"),
         content_kind: "video",
         ttl: REPLAY_TTL
       )
@@ -123,7 +129,6 @@ class SpaceXXCardProcessor
       )
     end
 
-    photos = gallery_images(selected_media)
     unless photos.empty?
       return card_entry(
         fingerprint: fingerprint,
@@ -189,6 +194,10 @@ class SpaceXXCardProcessor
 
   def media_for(post, media_by_key)
     Array(post.dig("attachments", "media_keys")).filter_map { |key| media_by_key[key] }
+  end
+
+  def video_media?(media)
+    %w[video animated_gif].include?(media["type"])
   end
 
   def best_variant(media)

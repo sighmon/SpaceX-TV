@@ -132,6 +132,29 @@ struct BroadcastDiscovery {
 
             // Fast path: if we previously checked this exact card (same originating post + same content fingerprint),
             // reuse the prior classification / resolution and skip network work.
+            // Multi-media posts are classified from attachments on the candidate itself. Prefer that
+            // over a stale cached single-video/gallery label from older processor versions.
+            if candidate.requiresMediaCollection {
+                if cardCache.resolution(for: candidate) != nil {
+                    report.add("Using cached card check for \(statusURL.lastPathComponent)")
+                    report.recordCardCheckHit()
+                } else {
+                    report.recordCardCheckMiss()
+                    cardCache.record(
+                        for: candidate,
+                        streamURL: candidate.streamURL,
+                        thumbnailURL: candidate.thumbnailURL ?? candidate.galleryImages.first?.url,
+                        isLive: nil,
+                        contentKind: .collection,
+                        validFor: candidate.streamURL != nil ? .directMedia : nil
+                    )
+                }
+                let summary = PostMediaItem.summaryLabel(for: candidate.mediaItems) ?? "mixed media"
+                report.add("Adding collection \(index + 1): \(statusURL.lastPathComponent), \(summary)")
+                selectedXItems.append(DiscoveredBroadcastItem(candidate: candidate, broadcast: collection(from: candidate)))
+                continue
+            }
+
             if let cached = cardCache.resolution(for: candidate) {
                 report.add("Using cached card check for \(statusURL.lastPathComponent)")
                 report.recordCardCheckHit()
@@ -139,9 +162,21 @@ struct BroadcastDiscovery {
                     // We previously probed this post and it contained neither a broadcast nor a gallery.
                     continue
                 }
-                if cached.contentKind == .gallery {
+                switch cached.contentKind {
+                case .gallery:
                     selectedXItems.append(DiscoveredBroadcastItem(candidate: candidate, broadcast: gallery(from: candidate)))
-                } else {
+                case .collection:
+                    // Candidate media no longer looks multi-item; fall through to video reconstruction.
+                    selectedXItems.append(DiscoveredBroadcastItem(
+                        candidate: candidate,
+                        broadcast: broadcast(
+                            from: candidate,
+                            streamURL: cached.streamURL,
+                            thumbnailURL: candidate.thumbnailURL ?? cached.thumbnailURL,
+                            isLive: cached.isLive
+                        )
+                    ))
+                case .video, .none:
                     selectedXItems.append(DiscoveredBroadcastItem(
                         candidate: candidate,
                         broadcast: broadcast(
@@ -281,6 +316,8 @@ struct BroadcastDiscovery {
             tweetText: candidate.tweetText,
             publishedAt: candidate.publishedAt,
             thumbnailURL: thumbnailURL ?? candidate.thumbnailURL,
+            galleryImages: candidate.galleryImages,
+            mediaItems: candidate.mediaItems,
             artworkName: candidate.artworkName,
             isPinned: candidate.isPinned,
             isLive: isLive
@@ -298,7 +335,27 @@ struct BroadcastDiscovery {
             publishedAt: candidate.publishedAt,
             thumbnailURL: candidate.thumbnailURL ?? candidate.galleryImages.first?.url,
             galleryImages: candidate.galleryImages,
+            mediaItems: candidate.mediaItems,
             artworkName: "photo.on.rectangle",
+            isPinned: candidate.isPinned
+        )
+    }
+
+    private func collection(from candidate: BroadcastCandidate) -> Broadcast {
+        Broadcast(
+            title: candidate.title,
+            subtitle: candidate.subtitle,
+            sourceURL: candidate.statusURL,
+            sourceKind: .xBroadcast,
+            contentKind: .collection,
+            streamURL: candidate.streamURL,
+            fallbackStreamURL: candidate.fallbackStreamURL,
+            tweetText: candidate.tweetText,
+            publishedAt: candidate.publishedAt,
+            thumbnailURL: candidate.thumbnailURL ?? candidate.galleryImages.first?.url,
+            galleryImages: candidate.galleryImages,
+            mediaItems: candidate.mediaItems,
+            artworkName: "rectangle.stack",
             isPinned: candidate.isPinned
         )
     }
@@ -450,13 +507,21 @@ struct BroadcastDiscovery {
         let mediaSource = ownMedia.isEmpty && !referencedContentMedia.isEmpty
             ? "\(post.referencedContentTweetType ?? "referenced") status \(referencedContentPost?.id ?? "")"
             : "status"
-        let variant = bestVariant(from: media)
+        let items = postMediaItems(from: media)
         let galleryImages = galleryImages(from: media)
-        let thumbnailURL = media.compactMap(\.thumbnailURL).first ?? galleryImages.first?.url ?? post.thumbnailURLFromEntities ?? referencedContentPost?.thumbnailURLFromEntities
+        let firstVideoStreamURL = items.first(where: { $0.kind == .video })?.streamURL
+        let firstVideoVariant = media.first(where: isVideoMedia).flatMap { bestVariant(from: $0) }
+        let thumbnailURL = media.compactMap(\.thumbnailURL).first
+            ?? galleryImages.first?.url
+            ?? post.thumbnailURLFromEntities
+            ?? referencedContentPost?.thumbnailURLFromEntities
 
-        logVideoVariants(for: post.id, media: media, selectedVariant: variant, report: &report)
-        if let variant {
-            report.add("API media variant for \(post.id) from \(mediaSource): \(variant.debugDescription)")
+        logVideoVariants(for: post.id, media: media, selectedVariant: firstVideoVariant, report: &report)
+        if items.filter({ $0.kind == .video }).count > 1 || (items.contains(where: { $0.kind == .video }) && !galleryImages.isEmpty) {
+            let summary = PostMediaItem.summaryLabel(for: items) ?? "mixed media"
+            report.add("Multi-media collection for \(post.id) from \(mediaSource): \(summary)")
+        } else if let firstVideoVariant {
+            report.add("API media variant for \(post.id) from \(mediaSource): \(firstVideoVariant.debugDescription)")
         } else if let linkedBroadcastURL {
             report.add("Broadcast link for \(post.id): \(linkedBroadcastURL.absoluteString)")
         } else if !galleryImages.isEmpty {
@@ -467,7 +532,7 @@ struct BroadcastDiscovery {
         if let referencedContentTweetID = post.referencedContentTweetID {
             report.add("\(post.referencedContentTweetType ?? "Referenced") status for \(post.id): \(referencedContentTweetID), media objects \(referencedContentMedia.count)")
         }
-        report.add("Thumbnail for \(post.id): \(thumbnailURL == nil ? "missing" : "present"), media objects \(media.count), URL images \(post.urlImageCount)")
+        report.add("Thumbnail for \(post.id): \(thumbnailURL == nil ? "missing" : "present"), media objects \(media.count), media items \(items.count), URL images \(post.urlImageCount)")
 
         let subtitlePrefix = isPinned ? "Pinned SpaceX status" : "X status"
         let fp = contentFingerprint(
@@ -483,16 +548,18 @@ struct BroadcastDiscovery {
                 post: post,
                 statusURL: statusURL,
                 linkedBroadcastURL: linkedBroadcastURL,
-                variant: variant,
+                mediaItems: items,
+                firstVideoStreamURL: firstVideoStreamURL,
                 galleryImages: galleryImages,
                 referencedContentPostID: referencedContentPost?.id
             ),
-            streamURL: variant?.url,
+            streamURL: firstVideoStreamURL,
             title: post.broadcastTitle,
             subtitle: candidateSubtitle(
                 postID: post.id,
                 isPinned: isPinned,
-                variant: variant,
+                mediaItems: items,
+                firstVideoVariant: firstVideoVariant,
                 linkedBroadcastURL: linkedBroadcastURL,
                 fallbackPrefix: subtitlePrefix
             ),
@@ -500,6 +567,7 @@ struct BroadcastDiscovery {
             publishedAt: post.createdAt,
             thumbnailURL: thumbnailURL,
             galleryImages: galleryImages,
+            mediaItems: items,
             allowsDeferredStreamResolution: linkedBroadcastURL != nil,
             isPinned: isPinned,
             originalPostID: post.id,
@@ -538,7 +606,8 @@ struct BroadcastDiscovery {
         post: XAPIPost,
         statusURL: URL,
         linkedBroadcastURL: URL?,
-        variant: XAPIMediaVariant?,
+        mediaItems: [PostMediaItem],
+        firstVideoStreamURL: URL?,
         galleryImages: [GalleryImage],
         referencedContentPostID: String?
     ) -> String {
@@ -547,8 +616,14 @@ struct BroadcastDiscovery {
             return "broadcast:\(broadcastID)"
         }
 
-        if let variant {
-            return "stream:\(variant.url.absoluteString)"
+        let videoCount = mediaItems.filter { $0.kind == .video }.count
+        let photoCount = mediaItems.filter { $0.kind == .photo }.count
+        if videoCount > 1 || (videoCount >= 1 && photoCount >= 1) {
+            return "media-set:\(referencedContentPostID ?? post.id)"
+        }
+
+        if let firstVideoStreamURL {
+            return "stream:\(firstVideoStreamURL.absoluteString)"
         }
 
         if !galleryImages.isEmpty {
@@ -633,12 +708,19 @@ struct BroadcastDiscovery {
     private func candidateSubtitle(
         postID: String,
         isPinned: Bool,
-        variant: XAPIMediaVariant?,
+        mediaItems: [PostMediaItem],
+        firstVideoVariant: XAPIMediaVariant?,
         linkedBroadcastURL: URL?,
         fallbackPrefix: String
     ) -> String {
-        if let variant {
-            return "\(isPinned ? "Pinned " : "")X API media \(variant.contentType ?? "variant")"
+        if let summary = PostMediaItem.summaryLabel(for: mediaItems),
+           mediaItems.filter({ $0.kind == .video }).count > 1
+            || (mediaItems.contains(where: { $0.kind == .video }) && mediaItems.contains(where: { $0.kind == .photo })) {
+            return "\(isPinned ? "Pinned " : "")X media collection · \(summary)"
+        }
+
+        if let firstVideoVariant {
+            return "\(isPinned ? "Pinned " : "")X API media \(firstVideoVariant.contentType ?? "variant")"
         }
 
         if linkedBroadcastURL != nil {
@@ -660,6 +742,41 @@ struct BroadcastDiscovery {
                     altText: media.altText
                 )
             }
+    }
+
+    private func postMediaItems(from media: [XAPIMedia]) -> [PostMediaItem] {
+        media.compactMap { item in
+            if isVideoMedia(item) {
+                let variant = bestVariant(from: item)
+                return PostMediaItem(
+                    id: item.mediaKey,
+                    kind: .video,
+                    streamURL: variant?.url,
+                    thumbnailURL: item.thumbnailURL,
+                    width: item.width,
+                    height: item.height,
+                    altText: item.altText
+                )
+            }
+
+            if item.type == "photo", let photoURL = item.fullSizePhotoURL {
+                return PostMediaItem(
+                    id: item.mediaKey,
+                    kind: .photo,
+                    thumbnailURL: item.thumbnailURL ?? photoURL,
+                    photoURL: photoURL,
+                    width: item.width,
+                    height: item.height,
+                    altText: item.altText
+                )
+            }
+
+            return nil
+        }
+    }
+
+    private func isVideoMedia(_ media: XAPIMedia) -> Bool {
+        media.type == "video" || media.type == "animated_gif"
     }
 
     private func mediaObjects(from post: XAPIPost, mediaByKey: [String: XAPIMedia]) -> [XAPIMedia] {
@@ -1025,6 +1142,10 @@ struct BroadcastDiscovery {
         return error.localizedDescription
     }
 
+    private func bestVariant(from media: XAPIMedia) -> XAPIMediaVariant? {
+        bestVariant(from: [media])
+    }
+
     private func bestVariant(from media: [XAPIMedia]) -> XAPIMediaVariant? {
         let variants = media.flatMap { $0.variants ?? [] }
             .filter { $0.url.scheme?.hasPrefix("http") == true }
@@ -1058,6 +1179,7 @@ struct BroadcastCandidate {
     var publishedAt: Date? = nil
     var thumbnailURL: URL? = nil
     var galleryImages: [GalleryImage] = []
+    var mediaItems: [PostMediaItem] = []
     var allowsDeferredStreamResolution: Bool = false
     var isPinned: Bool = false
     var sourceKind: Broadcast.SourceKind = .xBroadcast
@@ -1079,6 +1201,7 @@ struct BroadcastCandidate {
         publishedAt: Date? = nil,
         thumbnailURL: URL? = nil,
         galleryImages: [GalleryImage] = [],
+        mediaItems: [PostMediaItem] = [],
         allowsDeferredStreamResolution: Bool = false,
         isPinned: Bool = false,
         sourceKind: Broadcast.SourceKind = .xBroadcast,
@@ -1101,6 +1224,7 @@ struct BroadcastCandidate {
         self.publishedAt = publishedAt
         self.thumbnailURL = thumbnailURL
         self.galleryImages = galleryImages
+        self.mediaItems = mediaItems
         self.allowsDeferredStreamResolution = allowsDeferredStreamResolution
         self.isPinned = isPinned
         self.sourceKind = sourceKind
@@ -1108,6 +1232,13 @@ struct BroadcastCandidate {
         self.isAppendedSpaceXContent = isAppendedSpaceXContent
         self.originalPostID = originalPostID
         self.contentFingerprint = contentFingerprint
+    }
+
+    /// Multi-video posts, or posts that mix video and photos, open a media picker.
+    var requiresMediaCollection: Bool {
+        let videoCount = mediaItems.filter { $0.kind == .video }.count
+        let photoCount = mediaItems.filter { $0.kind == .photo }.count
+        return videoCount > 1 || (videoCount >= 1 && photoCount >= 1)
     }
 }
 
@@ -1218,7 +1349,7 @@ struct BroadcastDiscoveryFailure: LocalizedError {
 // and negative results (plain posts that contain neither). This avoids re-checking
 // the same unchanged non-broadcast/non-gallery posts on every refresh.
 struct CardResolutionCache: Codable {
-    var version: Int = 3
+    var version: Int = 4
     var entries: [String: CardResolutionEntry] = [:]
 
     mutating func merge(_ incoming: CardResolutionCache) -> Int {

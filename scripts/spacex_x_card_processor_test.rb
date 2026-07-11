@@ -36,6 +36,36 @@ class SpaceXXCardProcessorTest < Minitest::Test
     assert_equal false, entries.fetch("post:plain").fetch("hasUsableContent")
   end
 
+  def test_multi_video_posts_remain_video_kind_for_older_apps
+    value = response
+    value.fetch("data") << post("multi-video", media_keys: %w[video-media video-media-2])
+    value.fetch("includes").fetch("media") << {
+      "media_key" => "video-media-2",
+      "type" => "video",
+      "preview_image_url" => "https://pbs.twimg.com/video-2.jpg",
+      "variants" => [
+        { "bit_rate" => 1_280_000, "content_type" => "video/mp4", "url" => "https://video.twimg.com/second.mp4" }
+      ]
+    }
+
+    entry = StubProcessor.new(now: NOW).process(value).dig("entries", "post:multi-video")
+
+    # contentKind stays "video" so previous app versions can decode processed_cards.
+    assert_equal "video", entry.fetch("contentKind")
+    assert_equal "https://video.twimg.com/high.mp4", entry.fetch("streamURL")
+    assert entry.fetch("hasUsableContent")
+  end
+
+  def test_mixed_video_and_photo_posts_remain_video_kind_for_older_apps
+    value = response
+    value.fetch("data") << post("mixed", media_keys: %w[video-media photo-media])
+
+    entry = StubProcessor.new(now: NOW).process(value).dig("entries", "post:mixed")
+
+    assert_equal "video", entry.fetch("contentKind")
+    assert_equal "https://video.twimg.com/high.mp4", entry.fetch("streamURL")
+  end
+
   def test_reuses_unchanged_unexpired_entries
     first = StubProcessor.new(now: NOW).process(response)
     existing_cache = { "processed_cards" => first }

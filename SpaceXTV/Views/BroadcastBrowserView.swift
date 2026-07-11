@@ -5,6 +5,7 @@ struct BroadcastBrowserView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Binding var selectedBroadcast: Broadcast?
     @Binding var selectedGallery: Broadcast?
+    @Binding var selectedCollection: Broadcast?
     @Binding var showsSettings: Bool
     @State private var nextLaunch: NextLaunch?
     @State private var nextLaunchError: String?
@@ -30,11 +31,13 @@ struct BroadcastBrowserView: View {
     init(
         selectedBroadcast: Binding<Broadcast?>,
         selectedGallery: Binding<Broadcast?>,
+        selectedCollection: Binding<Broadcast?> = .constant(nil),
         showsSettings: Binding<Bool>,
         previewNextLaunch: NextLaunch? = nil
     ) {
         self._selectedBroadcast = selectedBroadcast
         self._selectedGallery = selectedGallery
+        self._selectedCollection = selectedCollection
         self._showsSettings = showsSettings
         self._nextLaunch = State(initialValue: previewNextLaunch)
         self.loadsNextLaunch = previewNextLaunch == nil
@@ -355,6 +358,8 @@ struct BroadcastBrowserView: View {
                 selectedBroadcast = broadcast
             case .gallery:
                 selectedGallery = broadcast
+            case .collection:
+                selectedCollection = broadcast
             }
         } label: {
             BroadcastCard(broadcast: broadcast, isFocused: focusedID == broadcast.id)
@@ -720,9 +725,16 @@ private struct DebugLogView: View {
     }
 }
 
-private struct BroadcastCard: View {
+struct BroadcastCard: View {
     var broadcast: Broadcast
     var isFocused: Bool
+    /// When set, overrides the usual title/tweet text in the card body.
+    var titleOverride: String? = nil
+    /// When set, overrides metadata (date / media summary).
+    var metadataOverride: String? = nil
+    /// When set, overrides the trailing action glyph.
+    var actionSymbolOverride: String? = nil
+
     private let aspectRatio: CGFloat = 16.0 / 9.0
     private let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -776,7 +788,12 @@ private struct BroadcastCard: View {
     private var cardContent: some View {
         HStack(alignment: .bottom, spacing: 14) {
             VStack(alignment: .leading, spacing: 7) {
-                if broadcast.sourceKind == .hls || broadcast.isStarshipFlightTest {
+                if let titleOverride {
+                    Text(titleOverride)
+                        .font(primaryTextFont)
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                } else if broadcast.sourceKind == .hls || broadcast.isStarshipFlightTest {
                     Text(broadcast.title)
                         .font(primaryTextFont)
                         .foregroundStyle(.white)
@@ -797,9 +814,20 @@ private struct BroadcastCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .bottomLeading)
 
-            Image(systemName: broadcast.contentKind == .gallery ? "photo" : "play.fill")
+            Image(systemName: actionSymbolOverride ?? cardActionSymbol)
                 .font(.title3.weight(.bold))
                 .foregroundStyle(.white)
+        }
+    }
+
+    private var cardActionSymbol: String {
+        switch broadcast.contentKind {
+        case .gallery:
+            return "photo"
+        case .collection:
+            return "rectangle.stack"
+        case .video:
+            return "play.fill"
         }
     }
 
@@ -832,18 +860,23 @@ private struct BroadcastCard: View {
 
     @ViewBuilder
     private var metadata: some View {
-        if let publishedAt = broadcast.publishedAt {
+        if let metadataOverride {
+            Text(metadataOverride)
+                .lineLimit(1)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.gray.opacity(0.6))
+        } else if let publishedAt = broadcast.publishedAt {
             HStack(spacing: 10) {
                 Text(dateFormatter.string(from: publishedAt))
-                if broadcast.contentKind == .gallery {
-                    Text("\(broadcast.galleryImages.count) photos")
+                if let summary = broadcast.mediaSummaryLabel {
+                    Text(summary)
                 }
             }
             .lineLimit(1)
             .font(.caption2.weight(.medium))
             .foregroundStyle(.gray.opacity(0.6))
-        } else if broadcast.contentKind == .gallery {
-            Text("\(broadcast.galleryImages.count) photos")
+        } else if let summary = broadcast.mediaSummaryLabel {
+            Text(summary)
                 .lineLimit(1)
                 .font(.caption2.weight(.medium))
             .foregroundStyle(.gray.opacity(0.6))
@@ -1013,7 +1046,7 @@ private final class ThumbnailImageLoader: ObservableObject {
     }
 }
 
-private extension Broadcast {
+extension Broadcast {
     var isStarshipFlightTest: Bool {
         subtitle.hasPrefix("Starship flight test")
     }
@@ -1062,6 +1095,43 @@ private extension Broadcast {
             artworkName: "SpaceX"
         ),
         Broadcast(
+            id: UUID(uuidString: "9C1D2E3F-4A5B-6C7D-8E9F-0A1B2C3D4E5F")!,
+            title: "Multi-clip highlight",
+            subtitle: "X media collection · 2 videos · 1 photo",
+            sourceURL: URL(string: "https://x.com/SpaceX/status/preview-collection")!,
+            sourceKind: .xBroadcast,
+            contentKind: .collection,
+            tweetText: "Highlights from today's static fire and pad operations.",
+            publishedAt: Date(timeIntervalSince1970: 1_777_900_000),
+            thumbnailURL: URL(string: "https://example.com/spacex-preview-collection.jpg"),
+            galleryImages: [
+                GalleryImage(url: URL(string: "https://example.com/spacex-preview-photo.jpg")!, width: 1600, height: 900),
+            ],
+            mediaItems: [
+                PostMediaItem(
+                    id: "v1",
+                    kind: .video,
+                    streamURL: URL(string: "https://example.com/video-1.mp4"),
+                    thumbnailURL: URL(string: "https://example.com/spacex-preview-v1.jpg")
+                ),
+                PostMediaItem(
+                    id: "p1",
+                    kind: .photo,
+                    thumbnailURL: URL(string: "https://example.com/spacex-preview-photo.jpg"),
+                    photoURL: URL(string: "https://example.com/spacex-preview-photo.jpg"),
+                    width: 1600,
+                    height: 900
+                ),
+                PostMediaItem(
+                    id: "v2",
+                    kind: .video,
+                    streamURL: URL(string: "https://example.com/video-2.mp4"),
+                    thumbnailURL: URL(string: "https://example.com/spacex-preview-v2.jpg")
+                ),
+            ],
+            artworkName: "SpaceX"
+        ),
+        Broadcast(
             id: UUID(uuidString: "83B1868E-4B52-48BA-B1C7-9102D456A4A0")!,
             title: "Dragon Departure",
             subtitle: "Live broadcast",
@@ -1090,11 +1160,13 @@ private extension NextLaunch {
 #Preview("Broadcast Browser") {
     @Previewable @State var selectedBroadcast: Broadcast?
     @Previewable @State var selectedGallery: Broadcast?
+    @Previewable @State var selectedCollection: Broadcast?
     @Previewable @State var showsSettings = false
 
     BroadcastBrowserView(
         selectedBroadcast: $selectedBroadcast,
         selectedGallery: $selectedGallery,
+        selectedCollection: $selectedCollection,
         showsSettings: $showsSettings,
         previewNextLaunch: .preview
     )

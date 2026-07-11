@@ -165,6 +165,85 @@ final class CardResolutionCacheTests: XCTestCase {
         XCTAssertNotEqual(discovery.mediaFingerprint(first), discovery.mediaFingerprint(updated))
     }
 
+    func testRequiresMediaCollectionForMultiVideoAndMixedPosts() {
+        let multiVideo = BroadcastCandidate(
+            statusURL: URL(string: "https://x.com/spacex/status/1")!,
+            streamURL: URL(string: "https://video.twimg.com/a.mp4"),
+            subtitle: "collection",
+            mediaItems: [
+                PostMediaItem(id: "v1", kind: .video, streamURL: URL(string: "https://video.twimg.com/a.mp4")),
+                PostMediaItem(id: "v2", kind: .video, streamURL: URL(string: "https://video.twimg.com/b.mp4")),
+            ]
+        )
+        let mixed = BroadcastCandidate(
+            statusURL: URL(string: "https://x.com/spacex/status/2")!,
+            streamURL: URL(string: "https://video.twimg.com/a.mp4"),
+            subtitle: "mixed",
+            mediaItems: [
+                PostMediaItem(id: "v1", kind: .video, streamURL: URL(string: "https://video.twimg.com/a.mp4")),
+                PostMediaItem(id: "p1", kind: .photo, photoURL: URL(string: "https://pbs.twimg.com/photo.jpg")),
+            ]
+        )
+        let singleVideo = BroadcastCandidate(
+            statusURL: URL(string: "https://x.com/spacex/status/3")!,
+            streamURL: URL(string: "https://video.twimg.com/a.mp4"),
+            subtitle: "video",
+            mediaItems: [
+                PostMediaItem(id: "v1", kind: .video, streamURL: URL(string: "https://video.twimg.com/a.mp4")),
+            ]
+        )
+        let photosOnly = BroadcastCandidate(
+            statusURL: URL(string: "https://x.com/spacex/status/4")!,
+            streamURL: nil,
+            subtitle: "gallery",
+            galleryImages: [
+                GalleryImage(url: URL(string: "https://pbs.twimg.com/a.jpg")!),
+                GalleryImage(url: URL(string: "https://pbs.twimg.com/b.jpg")!),
+            ],
+            mediaItems: [
+                PostMediaItem(id: "p1", kind: .photo, photoURL: URL(string: "https://pbs.twimg.com/a.jpg")),
+                PostMediaItem(id: "p2", kind: .photo, photoURL: URL(string: "https://pbs.twimg.com/b.jpg")),
+            ]
+        )
+
+        XCTAssertTrue(multiVideo.requiresMediaCollection)
+        XCTAssertTrue(mixed.requiresMediaCollection)
+        XCTAssertFalse(singleVideo.requiresMediaCollection)
+        XCTAssertFalse(photosOnly.requiresMediaCollection)
+    }
+
+    func testMediaSummaryLabelForCollectionAndGallery() {
+        let collection = Broadcast(
+            title: "Highlights",
+            subtitle: "collection",
+            sourceURL: URL(string: "https://x.com/spacex/status/1")!,
+            sourceKind: .xBroadcast,
+            contentKind: .collection,
+            mediaItems: [
+                PostMediaItem(id: "v1", kind: .video),
+                PostMediaItem(id: "v2", kind: .video),
+                PostMediaItem(id: "p1", kind: .photo),
+            ],
+            artworkName: "rectangle.stack"
+        )
+        let gallery = Broadcast(
+            title: "Photos",
+            subtitle: "gallery",
+            sourceURL: URL(string: "https://x.com/spacex/status/2")!,
+            sourceKind: .xBroadcast,
+            contentKind: .gallery,
+            galleryImages: [
+                GalleryImage(url: URL(string: "https://pbs.twimg.com/a.jpg")!),
+                GalleryImage(url: URL(string: "https://pbs.twimg.com/b.jpg")!),
+                GalleryImage(url: URL(string: "https://pbs.twimg.com/c.jpg")!),
+            ],
+            artworkName: "photo"
+        )
+
+        XCTAssertEqual(collection.mediaSummaryLabel, "2 videos · 1 photo")
+        XCTAssertEqual(gallery.mediaSummaryLabel, "3 photos")
+    }
+
     func testDuplicateXCardsChooseNewestPostEvenWhenBroadcastIDsDiffer() {
         let discovery = BroadcastDiscovery()
         let older = makeXBroadcastCandidate(

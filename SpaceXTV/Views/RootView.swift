@@ -4,6 +4,7 @@ import UIKit
 struct RootView: View {
     @State private var selectedBroadcast: Broadcast?
     @State private var selectedGallery: Broadcast?
+    @State private var selectedCollection: Broadcast?
     @State private var showsSettings = false
 
     var body: some View {
@@ -12,6 +13,7 @@ struct RootView: View {
                 BroadcastBrowserView(
                     selectedBroadcast: $selectedBroadcast,
                     selectedGallery: $selectedGallery,
+                    selectedCollection: $selectedCollection,
                     showsSettings: $showsSettings
                     )
                     .toolbar(.hidden, for: .navigationBar)
@@ -27,6 +29,9 @@ struct RootView: View {
                         GalleryScreen(gallery: gallery)
                     }
 #endif
+                    .navigationDestination(item: $selectedCollection) { collection in
+                        MediaCollectionScreen(collection: collection)
+                    }
                     .navigationDestination(isPresented: $showsSettings) {
                         SettingsView()
                     }
