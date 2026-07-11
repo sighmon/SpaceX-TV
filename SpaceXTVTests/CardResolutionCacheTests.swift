@@ -469,6 +469,95 @@ final class CardResolutionCacheTests: XCTestCase {
         XCTAssertTrue(library.canLoadMore)
     }
 
+    @MainActor
+    func testNeedsNearLaunchRefreshWithinFiveMinutesWithoutLiveCard() {
+        let broadcast = Broadcast(
+            title: "Replay",
+            subtitle: "X status",
+            sourceURL: URL(string: "https://x.com/spacex/status/123")!,
+            sourceKind: .xBroadcast,
+            artworkName: "play.rectangle",
+            isLive: false
+        )
+        let library = BroadcastLibrary(previewBroadcasts: [broadcast])
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+        XCTAssertTrue(
+            library.needsNearLaunchRefresh(
+                launchDate: now.addingTimeInterval(4 * 60),
+                now: now
+            )
+        )
+        // Inclusive T−5 boundary.
+        XCTAssertTrue(
+            library.needsNearLaunchRefresh(
+                launchDate: now.addingTimeInterval(BroadcastLibrary.nearLaunchRefreshWindow),
+                now: now
+            )
+        )
+        XCTAssertFalse(
+            library.needsNearLaunchRefresh(
+                launchDate: now.addingTimeInterval(6 * 60),
+                now: now
+            )
+        )
+        XCTAssertFalse(
+            library.needsNearLaunchRefresh(
+                launchDate: now.addingTimeInterval(-30),
+                now: now
+            )
+        )
+        // Exactly at launch is not "upcoming within window".
+        XCTAssertFalse(
+            library.needsNearLaunchRefresh(
+                launchDate: now,
+                now: now
+            )
+        )
+    }
+
+    @MainActor
+    func testNeedsNearLaunchRefreshSkipsWhenLiveCardPresent() {
+        let live = Broadcast(
+            title: "Launch",
+            subtitle: "Live broadcast",
+            sourceURL: URL(string: "https://x.com/i/broadcasts/abc")!,
+            sourceKind: .xBroadcast,
+            artworkName: "play.rectangle",
+            isLive: true
+        )
+        let library = BroadcastLibrary(previewBroadcasts: [live])
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+        XCTAssertFalse(
+            library.needsNearLaunchRefresh(
+                launchDate: now.addingTimeInterval(3 * 60),
+                now: now
+            )
+        )
+    }
+
+    @MainActor
+    func testNeedsNearLaunchRefreshTreatsNilIsLiveAsNotLive() {
+        let unknown = Broadcast(
+            title: "Status",
+            subtitle: "X status",
+            sourceURL: URL(string: "https://x.com/spacex/status/123")!,
+            sourceKind: .xBroadcast,
+            artworkName: "play.rectangle",
+            isLive: nil
+        )
+        let library = BroadcastLibrary(previewBroadcasts: [unknown])
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+        XCTAssertTrue(
+            library.needsNearLaunchRefresh(
+                launchDate: now.addingTimeInterval(2 * 60),
+                now: now
+            )
+        )
+    }
+
     private func makeCandidate(fingerprint: String) -> BroadcastCandidate {
         BroadcastCandidate(
             statusURL: URL(string: "https://x.com/spacex/status/123")!,

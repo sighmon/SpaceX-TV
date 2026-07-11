@@ -61,10 +61,15 @@ final class BroadcastLibrary: ObservableObject {
     private let maximumRequestedLimit = 20
     private let cacheVersion = 27
     private let cardCacheVersion = 4
+    /// When the next launch is this close and no LIVE card is present, auto-refresh in the background.
+    static let nearLaunchRefreshWindow: TimeInterval = 5 * 60
     private let xAPICacheURL = URL(string: "https://www.sighmon.com/spacex-tv/x-cache.json")!
     private var cachedBroadcasts: [Broadcast] = []
     private var requestedLimit = 0
     private var cardResolutionCache = CardResolutionCache()
+    private var isRefreshingInBackground = false
+    /// Bumped when a foreground discovery starts so older background results never apply.
+    private var discoveryGeneration = 0
 
     var hasXAPIBearerToken: Bool {
         !xAPIBearerToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -74,6 +79,10 @@ final class BroadcastLibrary: ObservableObject {
         usesXAPIBearerToken
             && hasXAPIBearerToken
             && requestedLimit < maximumRequestedLimit
+    }
+
+    var hasLiveBroadcast: Bool {
+        broadcasts.contains { $0.isLive == true }
     }
 
     init(
@@ -146,6 +155,8 @@ final class BroadcastLibrary: ObservableObject {
     }
 
     func refresh() async {
+        discoveryGeneration += 1
+        let generation = discoveryGeneration
         loadingState = .loading
         isLoadingMore = false
         debugLines = ["Starting refresh"]
@@ -155,27 +166,11 @@ final class BroadcastLibrary: ObservableObject {
         cardCheckMisses = 0
         do {
             let result = try await discoverRecentSpaceXBroadcasts(limit: pageSize)
-            let cacheCreatedAt = Date()
-            cachedBroadcasts = result.broadcasts
-            broadcasts = result.broadcasts
-            requestedLimit = pageSize
-            debugLines = result.report.lines
-            appDataCacheCreatedAt = cacheCreatedAt
-            xAPICacheGeneratedAt = result.report.xAPICacheGeneratedAt
-            cardCheckHits = result.report.cardCheckHits
-            cardCheckMisses = result.report.cardCheckMisses
-            saveDailyCache(
-                broadcasts: result.broadcasts,
-                debugLines: result.report.lines,
-                requestedLimit: pageSize,
-                createdAt: cacheCreatedAt,
-                xAPICacheGeneratedAt: result.report.xAPICacheGeneratedAt,
-                cardCheckHits: result.report.cardCheckHits,
-                cardCheckMisses: result.report.cardCheckMisses
-            )
-            saveCardResolutionCache()
+            guard generation == discoveryGeneration else { return }
+            applySuccessfulDiscovery(result, requestedLimit: pageSize)
             loadingState = .loaded
         } catch {
+            guard generation == discoveryGeneration else { return }
             cachedBroadcasts = []
             broadcasts = []
             requestedLimit = 0
@@ -190,10 +185,87 @@ final class BroadcastLibrary: ObservableObject {
         }
     }
 
+    /// True when launch is in the next 5 minutes and the current list has no LIVE card.
+    func needsNearLaunchRefresh(launchDate: Date, now: Date = Date()) -> Bool {
+        let remaining = launchDate.timeIntervalSince(now)
+        guard remaining > 0, remaining <= Self.nearLaunchRefreshWindow else {
+            return false
+        }
+        return !hasLiveBroadcast
+    }
+
+    /// Re-fetch broadcasts without clearing the grid (used at T−5 when cache has no LIVE card).
+    func refreshInBackgroundNearLaunch(launchDate: Date, now: Date = Date()) async {
+        guard needsNearLaunchRefresh(launchDate: launchDate, now: now) else { return }
+        guard case .loaded = loadingState else { return }
+        guard !isRefreshingInBackground, !isLoadingMore else { return }
+
+        let generation = discoveryGeneration
+        let limit = max(requestedLimit, pageSize)
+        isRefreshingInBackground = true
+        defer { isRefreshingInBackground = false }
+
+        let remainingSeconds = max(0, Int(launchDate.timeIntervalSince(now)))
+        let reason = "Near-launch background refresh (T−\(remainingSeconds)s, no LIVE card)"
+        debugLines = [reason] + debugLines
+        print("[SpaceXTV] \(reason)")
+
+        do {
+            let result = try await discoverRecentSpaceXBroadcasts(limit: limit)
+            // Discard if a newer discovery started (manual refresh / load more) or UI left loaded state.
+            guard generation == discoveryGeneration else {
+                print("[SpaceXTV] Near-launch refresh discarded (superseded by newer discovery)")
+                return
+            }
+            guard case .loaded = loadingState, !isLoadingMore else { return }
+            applySuccessfulDiscovery(result, requestedLimit: limit)
+            if hasLiveBroadcast {
+                debugLines = ["Near-launch refresh found a LIVE card"] + result.report.lines
+            } else {
+                debugLines = ["Near-launch refresh completed; still no LIVE card"] + result.report.lines
+            }
+        } catch {
+            guard generation == discoveryGeneration else { return }
+            let message: String
+            if let failure = error as? BroadcastDiscoveryFailure {
+                message = failure.errorDescription ?? failure.localizedDescription
+                debugLines = ["Near-launch refresh failed: \(message)"] + failure.report.lines
+            } else {
+                message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                debugLines = ["Near-launch refresh failed: \(message)"] + debugLines
+            }
+            // Keep existing broadcasts visible on failure.
+        }
+    }
+
+    private func applySuccessfulDiscovery(_ result: BroadcastDiscoveryResult, requestedLimit: Int) {
+        let cacheCreatedAt = Date()
+        cachedBroadcasts = result.broadcasts
+        broadcasts = result.broadcasts
+        self.requestedLimit = requestedLimit
+        debugLines = result.report.lines
+        appDataCacheCreatedAt = cacheCreatedAt
+        xAPICacheGeneratedAt = result.report.xAPICacheGeneratedAt
+        cardCheckHits = result.report.cardCheckHits
+        cardCheckMisses = result.report.cardCheckMisses
+        saveDailyCache(
+            broadcasts: result.broadcasts,
+            debugLines: result.report.lines,
+            requestedLimit: requestedLimit,
+            createdAt: cacheCreatedAt,
+            xAPICacheGeneratedAt: result.report.xAPICacheGeneratedAt,
+            cardCheckHits: result.report.cardCheckHits,
+            cardCheckMisses: result.report.cardCheckMisses
+        )
+        saveCardResolutionCache()
+    }
+
     func loadMore() async {
         guard !isLoadingMore else { return }
         guard canLoadMore else { return }
 
+        discoveryGeneration += 1
+        let generation = discoveryGeneration
         isLoadingMore = true
         defer { isLoadingMore = false }
 
@@ -205,26 +277,10 @@ final class BroadcastLibrary: ObservableObject {
 
         do {
             let result = try await discoverRecentSpaceXBroadcasts(limit: targetLimit)
-            let cacheCreatedAt = Date()
-            cachedBroadcasts = result.broadcasts
-            broadcasts = result.broadcasts
-            requestedLimit = targetLimit
-            debugLines = result.report.lines
-            appDataCacheCreatedAt = cacheCreatedAt
-            xAPICacheGeneratedAt = result.report.xAPICacheGeneratedAt
-            cardCheckHits = result.report.cardCheckHits
-            cardCheckMisses = result.report.cardCheckMisses
-            saveDailyCache(
-                broadcasts: result.broadcasts,
-                debugLines: result.report.lines,
-                requestedLimit: targetLimit,
-                createdAt: cacheCreatedAt,
-                xAPICacheGeneratedAt: result.report.xAPICacheGeneratedAt,
-                cardCheckHits: result.report.cardCheckHits,
-                cardCheckMisses: result.report.cardCheckMisses
-            )
-            saveCardResolutionCache()
+            guard generation == discoveryGeneration else { return }
+            applySuccessfulDiscovery(result, requestedLimit: targetLimit)
         } catch {
+            guard generation == discoveryGeneration else { return }
             if let failure = error as? BroadcastDiscoveryFailure {
                 debugLines = failure.report.lines
             } else {

@@ -117,6 +117,7 @@ struct BroadcastBrowserView: View {
         .task {
             guard case .idle = library.loadingState else { return }
             await library.load()
+            await considerNearLaunchRefresh()
         }
         .task(id: library.showsNextLaunchCountdown) {
             guard library.showsNextLaunchCountdown else {
@@ -125,6 +126,12 @@ struct BroadcastBrowserView: View {
             }
             guard loadsNextLaunch else { return }
             await loadNextLaunch()
+            await considerNearLaunchRefresh()
+        }
+        // Sleep until T−5 (or run immediately if already inside the window) so a long-lived
+        // home screen still auto-refreshes when the countdown crosses into the window.
+        .task(id: nearLaunchWatchID) {
+            await watchNearLaunchWindow()
         }
         .onChange(of: library.xAPIBearerToken) { _, _ in
             Task { await library.load() }
@@ -132,12 +139,26 @@ struct BroadcastBrowserView: View {
         .onChange(of: library.usesXAPIBearerToken) { _, _ in
             Task { await library.load() }
         }
-        .onChange(of: library.loadingState) { _, _ in
+        .onChange(of: library.loadingState) { _, newState in
             updateHomeFooterVisibility()
+            if case .loaded = newState {
+                Task { await considerNearLaunchRefresh() }
+            }
+        }
+        .onChange(of: nextLaunch?.launchDate) { _, _ in
+            Task { await considerNearLaunchRefresh() }
         }
         .onAppear {
             updateHomeFooterVisibility()
         }
+    }
+
+    /// Cancels/restarts the T−5 watch when countdown is toggled or the launch date changes.
+    private var nearLaunchWatchID: String {
+        guard library.showsNextLaunchCountdown, let nextLaunch else {
+            return "none"
+        }
+        return "\(nextLaunch.launchDate.timeIntervalSince1970)"
     }
 
     private func header(width: CGFloat) -> some View {
@@ -235,6 +256,31 @@ struct BroadcastBrowserView: View {
             nextLaunch = nil
             nextLaunchError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
+    }
+
+    private func considerNearLaunchRefresh() async {
+        guard library.showsNextLaunchCountdown else { return }
+        guard let nextLaunch else { return }
+        await library.refreshInBackgroundNearLaunch(launchDate: nextLaunch.launchDate)
+    }
+
+    /// Waits until the launch enters the near-launch window, then attempts a background refresh.
+    private func watchNearLaunchWindow() async {
+        guard library.showsNextLaunchCountdown else { return }
+        guard let launchDate = nextLaunch?.launchDate else { return }
+
+        let windowStart = launchDate.addingTimeInterval(-BroadcastLibrary.nearLaunchRefreshWindow)
+        let delay = windowStart.timeIntervalSinceNow
+        if delay > 0 {
+            do {
+                try await Task.sleep(for: .seconds(delay))
+            } catch {
+                return
+            }
+        }
+
+        guard !Task.isCancelled else { return }
+        await considerNearLaunchRefresh()
     }
 
     private func clearNextLaunch() {
