@@ -27,6 +27,7 @@ struct BroadcastDiscovery {
     private let maximumTimelineFetchLimit = 100
     private let starshipPlaylistURL = URL(string: "https://content.spacex.com/api/spacex-website/media-playlist/starship")!
     private let starshipFlightTestsPlaylistURL = URL(string: "https://content.spacex.com/api/spacex-website/media-playlist/starship-flight-tests")!
+    private let starshipTalksPlaylistURL = URL(string: "https://content.spacex.com/api/spacex-website/media-playlist/starship-talks")!
     private let launchTilesURL = URL(string: "https://content.spacex.com/api/spacex-website/launches-page-tiles")!
     private let missionsBaseURL = URL(string: "https://content.spacex.com/api/spacex-website/missions/")!
 
@@ -96,6 +97,7 @@ struct BroadcastDiscovery {
     ) async throws -> BroadcastDiscoveryResult {
         var candidates = deduplicatedCandidates(initialCandidates)
         var appendedStarshipFilmCandidates: [BroadcastCandidate] = []
+        var appendedStarshipTalkCandidates: [BroadcastCandidate] = []
         var appendedStarshipFlightTestCandidates: [BroadcastCandidate] = []
         do {
             appendedStarshipFilmCandidates = try await recentStarshipFilmCandidates(
@@ -108,6 +110,16 @@ struct BroadcastDiscovery {
             report.add("Starship film discovery failed: \(debugMessage(for: error))")
         }
         do {
+            appendedStarshipTalkCandidates = try await recentStarshipTalkCandidates(
+                prefersMP4Playback: prefersMP4Playback,
+                report: &report,
+                cachedPlaylist: starshipCache?.talksPlaylist
+            )
+            report.add("Starship talk candidates: \(appendedStarshipTalkCandidates.count)")
+        } catch {
+            report.add("Starship talk discovery failed: \(debugMessage(for: error))")
+        }
+        do {
             appendedStarshipFlightTestCandidates = try await starshipFlightTestCandidates(
                 prefersMP4Playback: prefersMP4Playback,
                 report: &report,
@@ -118,7 +130,10 @@ struct BroadcastDiscovery {
             report.add("Starship flight test discovery failed: \(debugMessage(for: error))")
         }
         candidates = candidates.sortedByPublishedDateDescending()
-        let mergedCandidateCount = candidates.count + appendedStarshipFilmCandidates.count + appendedStarshipFlightTestCandidates.count
+        let mergedCandidateCount = candidates.count
+            + appendedStarshipFilmCandidates.count
+            + appendedStarshipTalkCandidates.count
+            + appendedStarshipFlightTestCandidates.count
         report.add("Merged candidates: \(mergedCandidateCount)")
 
         guard mergedCandidateCount > 0 else {
@@ -296,6 +311,7 @@ struct BroadcastDiscovery {
         let selectedStarshipItems = (
             appendedStarshipFilmCandidates.sortedByPublishedDateDescending()
             + appendedStarshipFlightTestCandidates.sortedByPublishedDateDescending()
+            + appendedStarshipTalkCandidates.sortedByPublishedDateDescending()
         )
             .map { candidate in
                 DiscoveredBroadcastItem(candidate: candidate, broadcast: broadcast(from: candidate, streamURL: nil))
@@ -460,17 +476,24 @@ struct BroadcastDiscovery {
            let flightTestsPlaylist = cache.starshipFlightTestsPlaylist,
            let launchTiles = cache.starshipLaunchTiles,
            let missions = cache.starshipMissions {
+            let talksPlaylist = cache.starshipTalksPlaylist
             starshipCache = StarshipCacheSnapshot(
                 playlist: playlist,
                 flightTestsPlaylist: flightTestsPlaylist,
+                talksPlaylist: talksPlaylist,
                 launchTiles: launchTiles,
                 missions: missions
             )
+            let talksCount = talksPlaylist?.media.count ?? 0
             report.add(
                 "X API cache supplied SpaceX CMS data: \(playlist.media.count) films, "
+                    + "\(talksCount) talks, "
                     + "\(flightTestsPlaylist.media.count) flight test films, "
                     + "\(launchTiles.count) launch tiles, \(missions.count) missions"
             )
+            if talksPlaylist == nil {
+                report.add("X API cache has no Starship talks playlist; talks will use live SpaceX CMS")
+            }
         } else {
             report.add("X API cache has no complete SpaceX CMS snapshot; using live SpaceX CMS")
         }
@@ -874,6 +897,40 @@ struct BroadcastDiscovery {
                 thumbnailURL: media.poster?.bestURL,
                 sourceKind: .hls,
                 artworkName: media.uhdStreamingLink == nil && media.uhdLink == nil ? "film" : "play.tv",
+                isAppendedSpaceXContent: true
+            )
+        }
+    }
+
+    private func recentStarshipTalkCandidates(
+        prefersMP4Playback: Bool,
+        report: inout DiscoveryReport,
+        cachedPlaylist: SpaceXMediaPlaylist? = nil
+    ) async throws -> [BroadcastCandidate] {
+        let playlist: SpaceXMediaPlaylist
+        if let cachedPlaylist {
+            report.add("Using cached SpaceX Starship talks playlist")
+            playlist = cachedPlaylist
+        } else {
+            report.add("SpaceX CMS GET: \(starshipTalksPlaylistURL.path)")
+            let data = try await spaceXCMSData(from: starshipTalksPlaylistURL, report: &report)
+            playlist = try spaceXCMSDecoder().decode(SpaceXMediaPlaylist.self, from: data)
+        }
+
+        return playlist.media.compactMap { media in
+            guard let playbackURLs = media.playbackURLs(prefersMP4Playback: prefersMP4Playback) else { return nil }
+            return BroadcastCandidate(
+                statusURL: playbackURLs.primary,
+                dedupeKey: "spacex-starship-talk:\(media.documentID ?? media.link ?? playbackURLs.primary.absoluteString)",
+                streamURL: nil,
+                fallbackStreamURL: playbackURLs.fallback,
+                title: media.title,
+                subtitle: media.bestStarshipTalkSubtitle,
+                tweetText: media.bestDescription,
+                publishedAt: media.date,
+                thumbnailURL: media.poster?.bestURL,
+                sourceKind: .hls,
+                artworkName: media.uhdStreamingLink == nil && media.uhdLink == nil ? "mic" : "play.tv",
                 isAppendedSpaceXContent: true
             )
         }
@@ -1536,6 +1593,7 @@ private struct XAPICacheResponse: Decodable {
     var processedCards: CardResolutionCache?
     var starshipPlaylist: SpaceXMediaPlaylist?
     var starshipFlightTestsPlaylist: SpaceXMediaPlaylist?
+    var starshipTalksPlaylist: SpaceXMediaPlaylist?
     var starshipLaunchTiles: [SpaceXStarshipLaunchTile]?
     var starshipMissions: [String: SpaceXStarshipMission]?
 
@@ -1548,6 +1606,7 @@ private struct XAPICacheResponse: Decodable {
         case processedCards = "processed_cards"
         case starshipPlaylist = "starship_playlist"
         case starshipFlightTestsPlaylist = "starship_flight_tests_playlist"
+        case starshipTalksPlaylist = "starship_talks_playlist"
         case starshipLaunchTiles = "starship_launch_tiles"
         case starshipMissions = "starship_missions"
     }
@@ -1805,6 +1864,7 @@ private struct SpaceXMediaPlaylist: Decodable {
 private struct StarshipCacheSnapshot {
     var playlist: SpaceXMediaPlaylist
     var flightTestsPlaylist: SpaceXMediaPlaylist
+    var talksPlaylist: SpaceXMediaPlaylist?
     var launchTiles: [SpaceXStarshipLaunchTile]
     var missions: [String: SpaceXStarshipMission]
 }
@@ -1848,6 +1908,13 @@ private struct SpaceXMediaItem: Decodable {
             return "Starship film · 4K"
         }
         return "Starship film"
+    }
+
+    var bestStarshipTalkSubtitle: String {
+        if uhdStreamingLink != nil || uhdLink != nil {
+            return "Starship talk · 4K"
+        }
+        return "Starship talk"
     }
 
     var bestStarshipFlightTestSubtitle: String {

@@ -59,7 +59,7 @@ final class BroadcastLibrary: ObservableObject {
     private let calendar: Calendar
     private let pageSize = 10
     private let maximumRequestedLimit = 20
-    private let cacheVersion = 27
+    private let cacheVersion = 28
     private let cardCacheVersion = 4
     /// When the next launch is this close and no LIVE card is present, auto-refresh in the background.
     static let nearLaunchRefreshWindow: TimeInterval = 5 * 60

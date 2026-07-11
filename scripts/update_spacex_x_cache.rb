@@ -20,6 +20,7 @@ COMMON_POST_QUERY = [
 
 STARSHIP_PLAYLIST_URL = "https://content.spacex.com/api/spacex-website/media-playlist/starship"
 STARSHIP_FLIGHT_TESTS_PLAYLIST_URL = "https://content.spacex.com/api/spacex-website/media-playlist/starship-flight-tests"
+STARSHIP_TALKS_PLAYLIST_URL = "https://content.spacex.com/api/spacex-website/media-playlist/starship-talks"
 LAUNCH_TILES_URL = "https://content.spacex.com/api/spacex-website/launches-page-tiles"
 MISSIONS_BASE_URL = "https://content.spacex.com/api/spacex-website/missions/"
 
@@ -69,6 +70,12 @@ begin
 
   starship_playlist = get_json(STARSHIP_PLAYLIST_URL)
   starship_flight_tests_playlist = get_json(STARSHIP_FLIGHT_TESTS_PLAYLIST_URL)
+  starship_talks_playlist = begin
+    get_json(STARSHIP_TALKS_PLAYLIST_URL)
+  rescue StandardError => error
+    log "Could not cache Starship talks playlist: #{error.class}: #{error.message}"
+    nil
+  end
   launch_tiles = get_json(LAUNCH_TILES_URL)
   starship_mission_links = Array(launch_tiles)
     .select { |tile| tile["vehicle"] == "Starship" && !tile["link"].to_s.empty? }
@@ -82,6 +89,7 @@ begin
     nil
   end.to_h
   log "Cached #{Array(starship_playlist["media"]).count} Starship films"
+  log "Cached #{Array(starship_talks_playlist&.fetch("media", nil)).count} Starship talks"
   log "Cached #{Array(starship_flight_tests_playlist["media"]).count} Starship flight test films"
   log "Cached #{starship_missions.count} Starship mission records"
 
@@ -101,13 +109,14 @@ begin
 
   payload = {
     generated_at: Time.now.utc.iso8601,
-    source: "x-api-and-spacex-cms-cache-v3",
+    source: "x-api-and-spacex-cms-cache-v4",
     user: user,
     pinned: pinned,
     timeline: timeline,
     processed_cards: processed_cards,
     starship_playlist: starship_playlist,
     starship_flight_tests_playlist: starship_flight_tests_playlist,
+    starship_talks_playlist: starship_talks_playlist,
     starship_launch_tiles: launch_tiles,
     starship_missions: starship_missions
   }

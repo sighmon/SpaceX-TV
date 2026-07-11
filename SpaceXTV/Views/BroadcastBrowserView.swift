@@ -59,6 +59,12 @@ struct BroadcastBrowserView: View {
         }
     }
 
+    private var starshipTalks: [Broadcast] {
+        visibleBroadcasts.filter {
+            $0.sourceKind == .hls && $0.subtitle.hasPrefix("Starship talk")
+        }
+    }
+
     private var starshipFlightTests: [Broadcast] {
         visibleBroadcasts.filter {
             $0.isStarshipFlightTest
@@ -372,6 +378,15 @@ struct BroadcastBrowserView: View {
                 }
                 .id("starship-flight-tests-header")
                 broadcastRows(starshipFlightTests, columnCount: columnCount, cardWidth: cardWidth)
+            }
+
+            if !starshipTalks.isEmpty {
+                GridRow {
+                    sectionHeader("STARSHIP TALKS", width: width)
+                        .gridCellColumns(columnCount)
+                }
+                .id("starship-talks-header")
+                broadcastRows(starshipTalks, columnCount: columnCount, cardWidth: cardWidth)
             }
         }
         .frame(width: width, alignment: .leading)
