@@ -11,6 +11,14 @@ struct Broadcast: Identifiable, Hashable, Codable {
         case video
         case gallery
         case collection
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            let raw = try container.decode(String.self)
+            // Unknown values (future kinds / stale cache blobs) degrade to video
+            // so a single bad field cannot fail the whole broadcast or card cache.
+            self = ContentKind(rawValue: raw) ?? .video
+        }
     }
 
     let id: UUID
@@ -99,7 +107,10 @@ struct Broadcast: Identifiable, Hashable, Codable {
         publishedAt = try container.decodeIfPresent(Date.self, forKey: .publishedAt)
         thumbnailURL = try container.decodeIfPresent(URL.self, forKey: .thumbnailURL)
         galleryImages = try container.decodeIfPresent([GalleryImage].self, forKey: .galleryImages) ?? []
-        mediaItems = try container.decodeIfPresent([PostMediaItem].self, forKey: .mediaItems) ?? []
+        // Skip individual media items that fail to decode so one bad element
+        // cannot drop an entire daily/broadcast cache entry.
+        mediaItems = (try container.decodeIfPresent([FailableDecodable<PostMediaItem>].self, forKey: .mediaItems) ?? [])
+            .compactMap(\.value)
         artworkName = try container.decode(String.self, forKey: .artworkName)
         isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         isLive = try container.decodeIfPresent(Bool.self, forKey: .isLive)
@@ -175,7 +186,7 @@ struct Broadcast: Identifiable, Hashable, Codable {
             return galleryImages
         }
         return photoMediaItems.compactMap { item in
-            guard let url = item.thumbnailURL ?? item.photoURL else { return nil }
+            guard let url = item.photoURL ?? item.thumbnailURL else { return nil }
             return GalleryImage(
                 url: url,
                 width: item.width,
@@ -186,10 +197,31 @@ struct Broadcast: Identifiable, Hashable, Codable {
     }
 }
 
+/// Decodes `T` when possible; failures become `nil` instead of failing the parent container.
+private struct FailableDecodable<T: Decodable>: Decodable {
+    var value: T?
+
+    init(from decoder: Decoder) throws {
+        value = try? T(from: decoder)
+    }
+}
+
 struct PostMediaItem: Hashable, Codable, Identifiable {
     enum Kind: String, Codable {
         case video
         case photo
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            let raw = try container.decode(String.self)
+            guard let kind = Kind(rawValue: raw) else {
+                throw DecodingError.dataCorruptedError(
+                    in: container,
+                    debugDescription: "Unknown PostMediaItem.Kind: \(raw)"
+                )
+            }
+            self = kind
+        }
     }
 
     var id: String

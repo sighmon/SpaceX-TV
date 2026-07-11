@@ -130,7 +130,6 @@ struct MediaCollectionScreen: View {
                 broadcast: entry.cardBroadcast(from: collection),
                 isFocused: focusedEntryID == entry.id,
                 titleOverride: entry.title,
-                metadataOverride: entry.metadataLabel,
                 actionSymbolOverride: entry.systemImage
             )
             .frame(width: width)
@@ -204,15 +203,6 @@ private enum MediaCollectionEntry: Identifiable {
         }
     }
 
-    var metadataLabel: String? {
-        switch self {
-        case .video:
-            return nil
-        case let .photos(images):
-            return images.count == 1 ? "Photo" : "\(images.count) photos"
-        }
-    }
-
     var systemImage: String {
         switch self {
         case .video:
@@ -227,7 +217,20 @@ private enum MediaCollectionEntry: Identifiable {
         case let .video(item, index, totalVideos):
             return collection.videoBroadcast(for: item, index: index, totalVideos: totalVideos)
         case let .photos(images):
-            return collection.photoGalleryBroadcast(images: images)
+            // Card chrome only: use .video so metadata is just the post date.
+            // Title override already shows "N photos"; selection still builds a real gallery.
+            return Broadcast(
+                title: collection.title,
+                subtitle: collection.subtitle,
+                sourceURL: collection.sourceURL,
+                sourceKind: collection.sourceKind,
+                contentKind: .video,
+                tweetText: collection.tweetText,
+                publishedAt: collection.publishedAt,
+                thumbnailURL: images.first?.url ?? collection.thumbnailURL,
+                artworkName: "photo.on.rectangle",
+                isPinned: collection.isPinned
+            )
         }
     }
 

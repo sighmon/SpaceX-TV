@@ -135,6 +135,14 @@ struct BroadcastDiscovery {
             // Multi-media posts are classified from attachments on the candidate itself. Prefer that
             // over a stale cached single-video/gallery label from older processor versions.
             if candidate.requiresMediaCollection {
+                let collectionItems = candidate.playableCollectionMediaItems
+                let omittedVideos = candidate.mediaItems.filter { $0.kind == .video && $0.streamURL == nil }.count
+                if omittedVideos > 0 {
+                    report.add(
+                        "Omitting \(omittedVideos) video(s) without API stream from collection \(statusURL.lastPathComponent)"
+                    )
+                }
+                let collectionStreamURL = collectionItems.first(where: { $0.kind == .video })?.streamURL
                 if cardCache.resolution(for: candidate) != nil {
                     report.add("Using cached card check for \(statusURL.lastPathComponent)")
                     report.recordCardCheckHit()
@@ -142,16 +150,21 @@ struct BroadcastDiscovery {
                     report.recordCardCheckMiss()
                     cardCache.record(
                         for: candidate,
-                        streamURL: candidate.streamURL,
+                        streamURL: collectionStreamURL,
                         thumbnailURL: candidate.thumbnailURL ?? candidate.galleryImages.first?.url,
                         isLive: nil,
                         contentKind: .collection,
-                        validFor: candidate.streamURL != nil ? .directMedia : nil
+                        validFor: collectionStreamURL != nil ? .directMedia : nil
                     )
                 }
-                let summary = PostMediaItem.summaryLabel(for: candidate.mediaItems) ?? "mixed media"
+                let summary = PostMediaItem.summaryLabel(for: collectionItems) ?? "mixed media"
                 report.add("Adding collection \(index + 1): \(statusURL.lastPathComponent), \(summary)")
-                selectedXItems.append(DiscoveredBroadcastItem(candidate: candidate, broadcast: collection(from: candidate)))
+                selectedXItems.append(
+                    DiscoveredBroadcastItem(
+                        candidate: candidate,
+                        broadcast: collection(from: candidate, mediaItems: collectionItems)
+                    )
+                )
                 continue
             }
 
@@ -341,20 +354,34 @@ struct BroadcastDiscovery {
         )
     }
 
-    private func collection(from candidate: BroadcastCandidate) -> Broadcast {
-        Broadcast(
+    private func collection(from candidate: BroadcastCandidate, mediaItems: [PostMediaItem]? = nil) -> Broadcast {
+        // Only include videos with a concrete API stream so the picker never offers
+        // items that would all fall back to scraping the same parent status URL.
+        let items = mediaItems ?? candidate.playableCollectionMediaItems
+        let streamURL = items.first(where: { $0.kind == .video })?.streamURL ?? candidate.streamURL
+        let galleryImages = items.compactMap { item -> GalleryImage? in
+            guard item.kind == .photo else { return nil }
+            guard let url = item.photoURL ?? item.thumbnailURL else { return nil }
+            return GalleryImage(
+                url: url,
+                width: item.width,
+                height: item.height,
+                altText: item.altText
+            )
+        }
+        return Broadcast(
             title: candidate.title,
             subtitle: candidate.subtitle,
             sourceURL: candidate.statusURL,
             sourceKind: .xBroadcast,
             contentKind: .collection,
-            streamURL: candidate.streamURL,
+            streamURL: streamURL,
             fallbackStreamURL: candidate.fallbackStreamURL,
             tweetText: candidate.tweetText,
             publishedAt: candidate.publishedAt,
-            thumbnailURL: candidate.thumbnailURL ?? candidate.galleryImages.first?.url,
-            galleryImages: candidate.galleryImages,
-            mediaItems: candidate.mediaItems,
+            thumbnailURL: candidate.thumbnailURL ?? galleryImages.first?.url,
+            galleryImages: galleryImages.isEmpty ? candidate.galleryImages : galleryImages,
+            mediaItems: items,
             artworkName: "rectangle.stack",
             isPinned: candidate.isPinned
         )
@@ -509,8 +536,11 @@ struct BroadcastDiscovery {
             : "status"
         let items = postMediaItems(from: media)
         let galleryImages = galleryImages(from: media)
-        let firstVideoStreamURL = items.first(where: { $0.kind == .video })?.streamURL
-        let firstVideoVariant = media.first(where: isVideoMedia).flatMap { bestVariant(from: $0) }
+        let firstVideoStreamURL = items.first(where: { $0.kind == .video && $0.streamURL != nil })?.streamURL
+        let firstVideoVariant = media
+            .filter(isVideoMedia)
+            .compactMap { bestVariant(from: $0) }
+            .first
         let thumbnailURL = media.compactMap(\.thumbnailURL).first
             ?? galleryImages.first?.url
             ?? post.thumbnailURLFromEntities
@@ -1234,10 +1264,26 @@ struct BroadcastCandidate {
         self.contentFingerprint = contentFingerprint
     }
 
-    /// Multi-video posts, or posts that mix video and photos, open a media picker.
+    /// Videos that already have an API stream, plus photos. Used so the collection
+    /// picker never lists clips that would all resolve to the same status scrape.
+    var playableCollectionMediaItems: [PostMediaItem] {
+        mediaItems.filter { item in
+            switch item.kind {
+            case .video:
+                return item.streamURL != nil
+            case .photo:
+                return item.photoURL != nil || item.thumbnailURL != nil
+            }
+        }
+    }
+
+    /// Multi-video posts, or posts that mix playable video and photos, open a media picker.
+    /// Videos without a stream URL are excluded so they fall through to single-video probe
+    /// or gallery rather than becoming unplayable picker entries.
     var requiresMediaCollection: Bool {
-        let videoCount = mediaItems.filter { $0.kind == .video }.count
-        let photoCount = mediaItems.filter { $0.kind == .photo }.count
+        let playable = playableCollectionMediaItems
+        let videoCount = playable.filter { $0.kind == .video }.count
+        let photoCount = playable.filter { $0.kind == .photo }.count
         return videoCount > 1 || (videoCount >= 1 && photoCount >= 1)
     }
 }

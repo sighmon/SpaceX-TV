@@ -206,10 +206,33 @@ final class CardResolutionCacheTests: XCTestCase {
             ]
         )
 
+        let multiVideoOneStream = BroadcastCandidate(
+            statusURL: URL(string: "https://x.com/spacex/status/5")!,
+            streamURL: URL(string: "https://video.twimg.com/a.mp4"),
+            subtitle: "partial",
+            mediaItems: [
+                PostMediaItem(id: "v1", kind: .video, streamURL: URL(string: "https://video.twimg.com/a.mp4")),
+                PostMediaItem(id: "v2", kind: .video, streamURL: nil),
+            ]
+        )
+        let multiVideoNoStreams = BroadcastCandidate(
+            statusURL: URL(string: "https://x.com/spacex/status/6")!,
+            streamURL: nil,
+            subtitle: "unplayable",
+            mediaItems: [
+                PostMediaItem(id: "v1", kind: .video, streamURL: nil),
+                PostMediaItem(id: "v2", kind: .video, streamURL: nil),
+            ]
+        )
+
         XCTAssertTrue(multiVideo.requiresMediaCollection)
         XCTAssertTrue(mixed.requiresMediaCollection)
         XCTAssertFalse(singleVideo.requiresMediaCollection)
         XCTAssertFalse(photosOnly.requiresMediaCollection)
+        // Only one playable stream → single-video path, not a broken multi-item picker.
+        XCTAssertFalse(multiVideoOneStream.requiresMediaCollection)
+        XCTAssertEqual(multiVideoOneStream.playableCollectionMediaItems.count, 1)
+        XCTAssertFalse(multiVideoNoStreams.requiresMediaCollection)
     }
 
     func testMediaSummaryLabelForCollectionAndGallery() {
@@ -220,9 +243,9 @@ final class CardResolutionCacheTests: XCTestCase {
             sourceKind: .xBroadcast,
             contentKind: .collection,
             mediaItems: [
-                PostMediaItem(id: "v1", kind: .video),
-                PostMediaItem(id: "v2", kind: .video),
-                PostMediaItem(id: "p1", kind: .photo),
+                PostMediaItem(id: "v1", kind: .video, streamURL: URL(string: "https://video.twimg.com/a.mp4")),
+                PostMediaItem(id: "v2", kind: .video, streamURL: URL(string: "https://video.twimg.com/b.mp4")),
+                PostMediaItem(id: "p1", kind: .photo, photoURL: URL(string: "https://pbs.twimg.com/photo.jpg")),
             ],
             artworkName: "rectangle.stack"
         )
@@ -242,6 +265,78 @@ final class CardResolutionCacheTests: XCTestCase {
 
         XCTAssertEqual(collection.mediaSummaryLabel, "2 videos · 1 photo")
         XCTAssertEqual(gallery.mediaSummaryLabel, "3 photos")
+    }
+
+    func testUnknownContentKindDecodesAsVideo() throws {
+        let json = """
+        {
+          "id": "3B246719-1357-4D5E-8E6F-87D652C64F01",
+          "title": "Test",
+          "subtitle": "status",
+          "sourceURL": "https://x.com/spacex/status/1",
+          "sourceKind": "xBroadcast",
+          "contentKind": "future_kind",
+          "artworkName": "play"
+        }
+        """.data(using: .utf8)!
+
+        let broadcast = try JSONDecoder().decode(Broadcast.self, from: json)
+        XCTAssertEqual(broadcast.contentKind, .video)
+    }
+
+    func testMediaItemsDecodeSkipsUnknownKindEntries() throws {
+        let json = """
+        {
+          "id": "3B246719-1357-4D5E-8E6F-87D652C64F01",
+          "title": "Test",
+          "subtitle": "status",
+          "sourceURL": "https://x.com/spacex/status/1",
+          "sourceKind": "xBroadcast",
+          "contentKind": "collection",
+          "artworkName": "play",
+          "mediaItems": [
+            {
+              "id": "v1",
+              "kind": "video",
+              "streamURL": "https://video.twimg.com/a.mp4"
+            },
+            {
+              "id": "bad",
+              "kind": "hologram"
+            },
+            {
+              "id": "p1",
+              "kind": "photo",
+              "photoURL": "https://pbs.twimg.com/photo.jpg"
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let broadcast = try JSONDecoder().decode(Broadcast.self, from: json)
+        XCTAssertEqual(broadcast.mediaItems.map(\.id), ["v1", "p1"])
+    }
+
+    func testPhotoGalleryBroadcastPrefersFullSizePhotoURL() {
+        let broadcast = Broadcast(
+            title: "Mixed",
+            subtitle: "collection",
+            sourceURL: URL(string: "https://x.com/spacex/status/1")!,
+            sourceKind: .xBroadcast,
+            contentKind: .collection,
+            mediaItems: [
+                PostMediaItem(
+                    id: "p1",
+                    kind: .photo,
+                    thumbnailURL: URL(string: "https://pbs.twimg.com/thumb.jpg"),
+                    photoURL: URL(string: "https://pbs.twimg.com/photo.jpg?name=orig")
+                ),
+            ],
+            artworkName: "photo"
+        )
+
+        let gallery = broadcast.photoGalleryBroadcast()
+        XCTAssertEqual(gallery.galleryImages.first?.url.absoluteString, "https://pbs.twimg.com/photo.jpg?name=orig")
     }
 
     func testDuplicateXCardsChooseNewestPostEvenWhenBroadcastIDsDiffer() {
