@@ -335,7 +335,10 @@ struct BroadcastDiscovery {
     }
 
     private func broadcast(from candidate: BroadcastCandidate, streamURL: URL?, thumbnailURL: URL? = nil, isLive: Bool? = nil) -> Broadcast {
-        Broadcast(
+        // Holding tiles without a webcast, or deferred X webcasts that have not produced a stream yet.
+        let isUpcoming = isLive != true
+            && (candidate.isUpcoming || (streamURL == nil && candidate.allowsDeferredStreamResolution))
+        return Broadcast(
             title: candidate.title,
             subtitle: candidate.subtitle,
             sourceURL: candidate.statusURL,
@@ -349,7 +352,8 @@ struct BroadcastDiscovery {
             mediaItems: candidate.mediaItems,
             artworkName: candidate.artworkName,
             isPinned: candidate.isPinned,
-            isLive: isLive
+            isLive: isLive,
+            isUpcoming: isUpcoming
         )
     }
 
@@ -1004,6 +1008,7 @@ struct BroadcastDiscovery {
             let mission = missionsByLink[tile.link]
             let webcast = mission?.preferredWebcast
             let broadcastURL = webcast?.url ?? tile.sourceURL
+            let hasPlayableWebcast = webcast?.url != nil
             return BroadcastCandidate(
                 statusURL: broadcastURL,
                 dedupeKey: "spacex-starship-flight-test:\(tile.starshipFlightTestKey)",
@@ -1016,7 +1021,9 @@ struct BroadcastDiscovery {
                 allowsDeferredStreamResolution: webcast?.sourceKind == .xBroadcast,
                 sourceKind: webcast?.sourceKind ?? .xBroadcast,
                 artworkName: "play.tv",
-                isAppendedSpaceXContent: true
+                isAppendedSpaceXContent: true,
+                // Holding CMS entries (e.g. starship-flight-13) ship a tile before any webcast exists.
+                isUpcoming: !hasPlayableWebcast
             )
         }
     }
@@ -1272,6 +1279,8 @@ struct BroadcastCandidate {
     var sourceKind: Broadcast.SourceKind = .xBroadcast
     var artworkName: String = "antenna.radiowaves.left.and.right"
     var isAppendedSpaceXContent: Bool = false
+    /// Holding entry with no playable webcast yet (SpaceX "UPCOMING" mission tiles).
+    var isUpcoming: Bool = false
     // For card check caching across refreshes: the originating X post ID and a fingerprint of
     // the post data that affects gallery classification or stream resolution.
     var originalPostID: String? = nil
@@ -1294,6 +1303,7 @@ struct BroadcastCandidate {
         sourceKind: Broadcast.SourceKind = .xBroadcast,
         artworkName: String = "antenna.radiowaves.left.and.right",
         isAppendedSpaceXContent: Bool = false,
+        isUpcoming: Bool = false,
         originalPostID: String? = nil,
         contentFingerprint: String? = nil
     ) {
@@ -1317,6 +1327,7 @@ struct BroadcastCandidate {
         self.sourceKind = sourceKind
         self.artworkName = artworkName
         self.isAppendedSpaceXContent = isAppendedSpaceXContent
+        self.isUpcoming = isUpcoming
         self.originalPostID = originalPostID
         self.contentFingerprint = contentFingerprint
     }
@@ -1368,10 +1379,15 @@ private struct DiscoveredBroadcastItem {
     var broadcast: Broadcast
 }
 
-private extension BroadcastCandidate {
+extension BroadcastCandidate {
     func isSortedBefore(_ rhs: BroadcastCandidate) -> Bool {
         if isPinned != rhs.isPinned {
             return isPinned
+        }
+
+        // Upcoming holding cards (no webcast yet) lead their section, even without a launch date.
+        if isUpcoming != rhs.isUpcoming {
+            return isUpcoming
         }
 
         switch (publishedAt, rhs.publishedAt) {
@@ -1390,7 +1406,7 @@ private extension BroadcastCandidate {
     }
 }
 
-private extension Array where Element == BroadcastCandidate {
+extension Array where Element == BroadcastCandidate {
     func sortedByPublishedDateDescending() -> [BroadcastCandidate] {
         sorted { $0.isSortedBefore($1) }
     }

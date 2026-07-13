@@ -450,6 +450,77 @@ final class CardResolutionCacheTests: XCTestCase {
         XCTAssertEqual(webcast.url?.absoluteString, "https://x.com/i/broadcasts/1YpK2V5M6Q")
     }
 
+    func testEmptySpaceXWebcastHasNoPlayableURL() {
+        // Holding mission records (e.g. starship-flight-13) ship with empty webcasts[].
+        let webcast = SpaceXWebcast(videoId: nil, streamingVideoType: nil)
+        XCTAssertNil(webcast.url)
+        XCTAssertNil(webcast.sourceKind)
+    }
+
+    func testUpcomingFlightTestCandidatesSortBeforeCompletedOnes() {
+        let completed = BroadcastCandidate(
+            statusURL: URL(string: "https://www.spacex.com/launches/starship-flight-12")!,
+            streamURL: nil,
+            title: "Starship's Twelfth Flight Test",
+            subtitle: "Starship flight test",
+            publishedAt: Date(timeIntervalSince1970: 1_780_000_000),
+            isUpcoming: false
+        )
+        let upcoming = BroadcastCandidate(
+            statusURL: URL(string: "https://www.spacex.com/launches/starship-flight-13")!,
+            streamURL: nil,
+            title: "Starship's Thirteenth Flight Test",
+            subtitle: "Starship flight test",
+            publishedAt: nil,
+            isUpcoming: true
+        )
+
+        let sorted = [completed, upcoming].sortedByPublishedDateDescending()
+        XCTAssertEqual(sorted.map(\.title), [
+            "Starship's Thirteenth Flight Test",
+            "Starship's Twelfth Flight Test",
+        ])
+    }
+
+    func testBroadcastIsUpcomingDefaultsFalseAndRoundTrips() throws {
+        let plain = Broadcast(
+            title: "Replay",
+            subtitle: "X status",
+            sourceURL: URL(string: "https://x.com/spacex/status/1")!,
+            sourceKind: .xBroadcast,
+            artworkName: "play.rectangle"
+        )
+        XCTAssertFalse(plain.isUpcoming)
+
+        let upcoming = Broadcast(
+            title: "Starship's Thirteenth Flight Test",
+            subtitle: "Starship flight test",
+            sourceURL: URL(string: "https://www.spacex.com/launches/starship-flight-13")!,
+            sourceKind: .xBroadcast,
+            artworkName: "play.tv",
+            isUpcoming: true
+        )
+        XCTAssertTrue(upcoming.isUpcoming)
+
+        let encoded = try JSONEncoder().encode(upcoming)
+        let decoded = try JSONDecoder().decode(Broadcast.self, from: encoded)
+        XCTAssertTrue(decoded.isUpcoming)
+
+        // Older cache blobs without the field must decode as not upcoming.
+        let legacyJSON = """
+        {
+          "id": "3B246719-1357-4D5E-8E6F-87D652C64F01",
+          "title": "Legacy",
+          "subtitle": "X status",
+          "sourceURL": "https://x.com/spacex/status/1",
+          "sourceKind": "xBroadcast",
+          "artworkName": "play.rectangle"
+        }
+        """.data(using: .utf8)!
+        let legacy = try JSONDecoder().decode(Broadcast.self, from: legacyJSON)
+        XCTAssertFalse(legacy.isUpcoming)
+    }
+
     @MainActor
     func testLoadMoreRequiresBearerTokenMode() {
         let broadcast = Broadcast(

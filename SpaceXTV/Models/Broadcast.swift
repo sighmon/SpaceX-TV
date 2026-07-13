@@ -37,6 +37,8 @@ struct Broadcast: Identifiable, Hashable, Codable {
     var artworkName: String
     var isPinned: Bool
     var isLive: Bool?
+    /// True for holding cards (e.g. SpaceX "UPCOMING" Starship flight tiles) that do not yet resolve to a playable broadcast.
+    var isUpcoming: Bool
 
     init(
         id: UUID = UUID(),
@@ -54,7 +56,8 @@ struct Broadcast: Identifiable, Hashable, Codable {
         mediaItems: [PostMediaItem] = [],
         artworkName: String,
         isPinned: Bool = false,
-        isLive: Bool? = nil
+        isLive: Bool? = nil,
+        isUpcoming: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -72,6 +75,7 @@ struct Broadcast: Identifiable, Hashable, Codable {
         self.artworkName = artworkName
         self.isPinned = isPinned
         self.isLive = isLive
+        self.isUpcoming = isUpcoming
     }
 
     enum CodingKeys: String, CodingKey {
@@ -91,6 +95,7 @@ struct Broadcast: Identifiable, Hashable, Codable {
         case artworkName
         case isPinned
         case isLive
+        case isUpcoming
     }
 
     init(from decoder: Decoder) throws {
@@ -114,6 +119,7 @@ struct Broadcast: Identifiable, Hashable, Codable {
         artworkName = try container.decode(String.self, forKey: .artworkName)
         isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         isLive = try container.decodeIfPresent(Bool.self, forKey: .isLive)
+        isUpcoming = try container.decodeIfPresent(Bool.self, forKey: .isUpcoming) ?? false
     }
 
     var videoMediaItems: [PostMediaItem] {
@@ -159,7 +165,8 @@ struct Broadcast: Identifiable, Hashable, Codable {
             thumbnailURL: item.thumbnailURL ?? thumbnailURL,
             artworkName: artworkName,
             isPinned: isPinned,
-            isLive: isLive
+            isLive: isLive,
+            isUpcoming: isUpcoming
         )
     }
 

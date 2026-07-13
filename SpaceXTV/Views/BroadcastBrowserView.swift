@@ -906,6 +906,14 @@ struct BroadcastCard: View {
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5)
                     .background(Color.red, in: Capsule())
+            } else if broadcast.isUpcoming {
+                Text("UPCOMING")
+                    .font(.caption2.weight(.black))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Color.gray, in: Capsule())
+                    .accessibilityLabel("Upcoming")
             }
 
             if broadcast.sourceKind == .xBroadcast && broadcast.isPinned {
@@ -1138,6 +1146,17 @@ private extension Broadcast {
             publishedAt: Date(timeIntervalSince1970: 1_779_264_000),
             artworkName: "SpaceX",
             isPinned: true
+        ),
+        Broadcast(
+            id: UUID(uuidString: "A1B2C3D4-E5F6-7890-ABCD-EF1234567890")!,
+            title: "Starship's Thirteenth Flight Test",
+            subtitle: "Starship flight test",
+            sourceURL: URL(string: "https://www.spacex.com/launches/starship-flight-13")!,
+            sourceKind: .xBroadcast,
+            tweetText: "Starship’s thirteenth flight test is preparing to launch.",
+            thumbnailURL: URL(string: "https://example.com/starship-flight-13.jpg"),
+            artworkName: "play.tv",
+            isUpcoming: true
         ),
         Broadcast(
             id: UUID(uuidString: "18189ACD-8B1F-422D-AE12-9940D5266774")!,
