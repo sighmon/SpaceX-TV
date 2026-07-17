@@ -280,7 +280,24 @@ struct BroadcastDiscovery {
                     )
                 ))
             } catch {
-                if candidate.allowsDeferredStreamResolution {
+                if case BroadcastResolverError.notStarted = error {
+                    // Pre-live X card: keep as UPCOMING with known non-live state; re-probe soon.
+                    report.add(
+                        "Broadcast not started yet for \(statusURL.lastPathComponent): \(debugMessage(for: error))"
+                    )
+                    cardCache.record(
+                        for: candidate,
+                        streamURL: nil,
+                        thumbnailURL: candidate.thumbnailURL,
+                        isLive: false,
+                        contentKind: .video,
+                        validFor: .liveStream
+                    )
+                    selectedXItems.append(DiscoveredBroadcastItem(
+                        candidate: candidate,
+                        broadcast: broadcast(from: candidate, streamURL: nil, isLive: false)
+                    ))
+                } else if candidate.allowsDeferredStreamResolution {
                     report.add("Deferring stream resolution for linked broadcast \(statusURL.lastPathComponent): \(debugMessage(for: error))")
                     cardCache.record(
                         for: candidate,

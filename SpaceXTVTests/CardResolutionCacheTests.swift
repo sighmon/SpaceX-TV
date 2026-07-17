@@ -482,6 +482,72 @@ final class CardResolutionCacheTests: XCTestCase {
         ])
     }
 
+    func testNotStartedFailureUsesFriendlyTitleAndScheduledTime() {
+        let start = Date(timeIntervalSince1970: 1_784_239_800) // 2026-07-16 22:10:00 UTC
+        let now = Date(timeIntervalSince1970: 1_784_230_000)
+
+        let future = BroadcastResolverError.notStarted(scheduledStart: start)
+        XCTAssertEqual(future.failureTitle, "Livestream not started")
+        let futureMessage = BroadcastResolverError.notStartedMessage(scheduledStart: start, now: now)
+        XCTAssertTrue(futureMessage.contains("scheduled to start"), futureMessage)
+        XCTAssertFalse(futureMessage.contains("should begin soon"), futureMessage)
+
+        let pastMessage = BroadcastResolverError.notStartedMessage(
+            scheduledStart: start,
+            now: start.addingTimeInterval(60)
+        )
+        XCTAssertTrue(pastMessage.contains("should begin soon"), pastMessage)
+
+        let unknown = BroadcastResolverError.notStarted(scheduledStart: nil)
+        XCTAssertEqual(unknown.failureTitle, "Livestream not started")
+        XCTAssertEqual(
+            unknown.errorDescription,
+            "This livestream has not started yet. Check back closer to the scheduled start time."
+        )
+
+        XCTAssertEqual(BroadcastResolverError.missingStream.failureTitle, "Stream unavailable")
+    }
+
+    func testXBroadcastDecodesScheduledStartAsStringOrNumber() throws {
+        let expected = Date(timeIntervalSince1970: 1_784_239_800)
+
+        let asString = """
+        {"state":"NOT_STARTED","scheduled_start_ms":"1784239800000","pre_live_slate_url":"https://pbs.twimg.com/slate.jpg"}
+        """.data(using: .utf8)!
+        let stringBroadcast = try JSONDecoder().decode(XBroadcast.self, from: asString)
+        XCTAssertEqual(stringBroadcast.scheduledStartDate, expected)
+        XCTAssertTrue(stringBroadcast.hasNotStarted)
+        XCTAssertNil(stringBroadcast.mediaKey)
+        XCTAssertEqual(stringBroadcast.bestThumbnailURL?.absoluteString, "https://pbs.twimg.com/slate.jpg")
+
+        let asNumber = """
+        {"media_key":"28_1","state":"NOT_STARTED","scheduled_start_ms":1784239800000}
+        """.data(using: .utf8)!
+        let numberBroadcast = try JSONDecoder().decode(XBroadcast.self, from: asNumber)
+        XCTAssertEqual(numberBroadcast.scheduledStartDate, expected)
+        XCTAssertEqual(numberBroadcast.mediaKey, "28_1")
+    }
+
+    func testXBroadcastNotStartedWithoutMediaKeyStillDecodes() throws {
+        let data = """
+        {"status":"Starship Flight","state":"NOT_STARTED","scheduled_start_ms":"1784239800000"}
+        """.data(using: .utf8)!
+        let broadcast = try JSONDecoder().decode(XBroadcast.self, from: data)
+        XCTAssertTrue(broadcast.hasNotStarted)
+        XCTAssertNil(broadcast.mediaKey)
+        XCTAssertEqual(broadcast.title, "Starship Flight")
+        XCTAssertEqual(broadcast.scheduledStartDate, Date(timeIntervalSince1970: 1_784_239_800))
+    }
+
+    func testFlexibleMillisecondsDateAcceptsStringAndNumber() throws {
+        let stringJSON = "\"1784239800000\"".data(using: .utf8)!
+        let numberJSON = "1784239800000".data(using: .utf8)!
+        let expected = Date(timeIntervalSince1970: 1_784_239_800)
+
+        XCTAssertEqual(try JSONDecoder().decode(FlexibleMillisecondsDate.self, from: stringJSON).date, expected)
+        XCTAssertEqual(try JSONDecoder().decode(FlexibleMillisecondsDate.self, from: numberJSON).date, expected)
+    }
+
     func testBroadcastIsUpcomingDefaultsFalseAndRoundTrips() throws {
         let plain = Broadcast(
             title: "Replay",

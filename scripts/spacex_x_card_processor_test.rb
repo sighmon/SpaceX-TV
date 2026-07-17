@@ -36,6 +36,141 @@ class SpaceXXCardProcessorTest < Minitest::Test
     assert_equal false, entries.fetch("post:plain").fetch("hasUsableContent")
   end
 
+  class NotStartedStubProcessor < SpaceXXCardProcessor
+    private
+
+    def resolve_broadcast(_value)
+      {
+        stream_url: nil,
+        thumbnail_url: "https://pbs.twimg.com/pre-live.jpg",
+        is_live: false
+      }
+    end
+
+    def stream_from_page(_url)
+      [nil, nil]
+    end
+  end
+
+  def test_not_started_broadcast_remains_usable_with_short_ttl
+    value = response
+    value["data"] = value.fetch("data").select { |post| post.fetch("id") == "broadcast" }
+
+    entry = NotStartedStubProcessor.new(now: NOW).process(value).dig("entries", "post:broadcast")
+
+    assert entry.fetch("hasUsableContent")
+    assert_nil entry.fetch("streamURL")
+    assert_equal false, entry.fetch("isLive")
+    assert_equal "https://pbs.twimg.com/pre-live.jpg", entry.fetch("thumbnailURL")
+    # Re-check soon so the HLS URL appears once X starts the stream.
+    assert_equal (NOW + SpaceXXCardProcessor::LIVE_TTL).iso8601, entry.fetch("expiresAt")
+  end
+
+  def test_not_started_broadcast_state_helper
+    processor = SpaceXXCardProcessor.new(now: NOW)
+    assert processor.send(:not_started_broadcast_state?, "NOT_STARTED")
+    assert processor.send(:not_started_broadcast_state?, "pre_published")
+    refute processor.send(:not_started_broadcast_state?, "RUNNING")
+    refute processor.send(:not_started_broadcast_state?, nil)
+  end
+
+  class NotStartedPageThumbnailFailsProcessor < SpaceXXCardProcessor
+    private
+
+    def request_json(url, bearer_token:, guest_token: nil, method: :get)
+      if url.include?("broadcasts/show.json")
+        {
+          "broadcasts" => {
+            "abc123" => {
+              "media_key" => "28_1",
+              "state" => "NOT_STARTED",
+              "status" => "Pre-live",
+              "pre_live_slate_url" => "https://pbs.twimg.com/slate.jpg"
+            }
+          }
+        }
+      else
+        raise "unexpected request_json: #{url}"
+      end
+    end
+
+    def activate_guest(_bearer_token)
+      "guest"
+    end
+
+    def web_configuration
+      { bearer_token: "token", query_id: "qid" }
+    end
+
+    def page_thumbnail_for(_url)
+      # Soft-fail seam: production page_thumbnail_for rescues to nil.
+      nil
+    end
+  end
+
+  def test_not_started_survives_page_thumbnail_failure
+    processor = NotStartedPageThumbnailFailsProcessor.new(now: NOW)
+    resolved = processor.send(:resolve_broadcast, "https://x.com/i/broadcasts/abc123")
+
+    assert_nil resolved[:stream_url]
+    assert_equal false, resolved[:is_live]
+    assert_equal "https://pbs.twimg.com/slate.jpg", resolved[:thumbnail_url]
+  end
+
+  class NotStartedTweetWithoutMediaKeyProcessor < SpaceXXCardProcessor
+    private
+
+    def request_json(url, bearer_token:, guest_token: nil, method: :get)
+      if url.include?("broadcasts/show.json")
+        raise "force tweet path"
+      end
+      if url.include?("TweetResultByRestId")
+        {
+          "data" => {
+            "tweetResult" => {
+              "result" => {
+                "card" => {
+                  "legacy" => {
+                    "binding_values" => [
+                      {
+                        "key" => "broadcast_state",
+                        "value" => { "string_value" => "NOT_STARTED" }
+                      },
+                      {
+                        "key" => "broadcast_pre_live_slate_x_large",
+                        "value" => { "image_value" => { "url" => "https://pbs.twimg.com/tweet-slate.jpg" } }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      else
+        raise "unexpected request_json: #{url}"
+      end
+    end
+
+    def activate_guest(_bearer_token)
+      "guest"
+    end
+
+    def web_configuration
+      { bearer_token: "token", query_id: "qid" }
+    end
+  end
+
+  def test_not_started_tweet_path_without_media_key
+    processor = NotStartedTweetWithoutMediaKeyProcessor.new(now: NOW)
+    # Numeric id forces tweet GraphQL fallback after show.json fails.
+    resolved = processor.send(:resolve_broadcast, "https://x.com/i/broadcasts/1234567890")
+
+    assert_nil resolved[:stream_url]
+    assert_equal false, resolved[:is_live]
+    assert_equal "https://pbs.twimg.com/tweet-slate.jpg", resolved[:thumbnail_url]
+  end
+
   def test_multi_video_posts_remain_video_kind_for_older_apps
     value = response
     value.fetch("data") << post("multi-video", media_keys: %w[video-media video-media-2])

@@ -1,10 +1,21 @@
 import Foundation
 
-enum BroadcastResolverError: LocalizedError {
+enum BroadcastResolverError: LocalizedError, Equatable {
     case invalidResponse
     case missingStream
     case missingBroadcastID
     case missingWebBearerToken
+    /// X has published a broadcast card, but the live stream has not begun yet.
+    case notStarted(scheduledStart: Date?)
+
+    var failureTitle: String {
+        switch self {
+        case .notStarted:
+            "Livestream not started"
+        default:
+            "Stream unavailable"
+        }
+    }
 
     var errorDescription: String? {
         switch self {
@@ -16,7 +27,26 @@ enum BroadcastResolverError: LocalizedError {
             "The X broadcast URL did not contain a broadcast ID."
         case .missingWebBearerToken:
             "The app could not resolve X web playback credentials for this broadcast."
+        case .notStarted(let scheduledStart):
+            Self.notStartedMessage(scheduledStart: scheduledStart)
         }
+    }
+
+    static func notStartedMessage(scheduledStart: Date?, now: Date = Date()) -> String {
+        guard let scheduledStart else {
+            return "This livestream has not started yet. Check back closer to the scheduled start time."
+        }
+
+        // DateFormatter is not thread-safe; build one per call (message formatting is rare).
+        let formatter = DateFormatter()
+        formatter.doesRelativeDateFormatting = true
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        let when = formatter.string(from: scheduledStart)
+        if scheduledStart > now {
+            return "Live coverage is scheduled to start \(when)."
+        }
+        return "Live coverage was scheduled for \(when) and should begin soon."
     }
 }
 
@@ -166,8 +196,20 @@ struct BroadcastResolver {
                 bearerToken: webBearerToken,
                 guestToken: guestToken
             )
+
+            // X publishes the card (and scheduled start) before the HLS endpoint exists.
+            // Only state drives this message — never rewrite auth/network failures as "not started".
+            // Check before requiring media_key so pre-live payloads without one still get friendly copy.
+            if broadcast.hasNotStarted {
+                throw BroadcastResolverError.notStarted(scheduledStart: broadcast.scheduledStartDate)
+            }
+
+            guard let mediaKey = broadcast.mediaKey, !mediaKey.isEmpty else {
+                throw BroadcastResolverError.missingStream
+            }
+
             let source = try await xLiveVideoSource(
-                mediaKey: broadcast.mediaKey,
+                mediaKey: mediaKey,
                 bearerToken: webBearerToken,
                 guestToken: guestToken
             )
@@ -188,6 +230,10 @@ struct BroadcastResolver {
                 isLive: broadcast.isLive
             )
         } catch {
+            // Preserve "not started yet" messaging; do not fall through to tweet lookup.
+            if case BroadcastResolverError.notStarted = error {
+                throw error
+            }
             guard broadcastID.allSatisfy(\.isNumber) else {
                 throw error
             }
@@ -212,8 +258,19 @@ struct BroadcastResolver {
             guestToken: guestToken,
             queryID: queryID
         )
+
+        // State-only: do not infer "not started" from a future schedule when the stream probe fails.
+        // Check before requiring media_key so pre-live tweet cards without one still get friendly copy.
+        if broadcast.hasNotStarted {
+            throw BroadcastResolverError.notStarted(scheduledStart: broadcast.scheduledStartDate)
+        }
+
+        guard let mediaKey = broadcast.mediaKey, !mediaKey.isEmpty else {
+            throw BroadcastResolverError.missingStream
+        }
+
         let source = try await xLiveVideoSource(
-            mediaKey: broadcast.mediaKey,
+            mediaKey: mediaKey,
             bearerToken: bearerToken,
             guestToken: guestToken
         )
@@ -303,12 +360,9 @@ struct BroadcastResolver {
         }
 
         let values = Dictionary(uniqueKeysWithValues: bindingValues.map { ($0.key, $0.value) })
-        guard let mediaKey = values["broadcast_media_key"]?.stringValue else {
-            throw BroadcastResolverError.missingStream
-        }
-
+        // Do not require media_key before reading state — pre-live cards may omit it.
         return XTweetBroadcast(
-            mediaKey: mediaKey,
+            mediaKey: values["broadcast_media_key"]?.stringValue,
             title: values["broadcast_title"]?.stringValue,
             thumbnailURL: [
                 values["broadcast_thumbnail_original"]?.imageValue?.url,
@@ -316,8 +370,16 @@ struct BroadcastResolver {
                 values["broadcast_thumbnail"]?.imageValue?.url,
                 values["broadcast_pre_live_slate_x_large"]?.imageValue?.url,
             ].compactMap { $0 }.first,
-            state: values["broadcast_state"]?.stringValue
+            state: values["broadcast_state"]?.stringValue,
+            scheduledStartDate: Self.dateFromTweetScheduledStart(
+                values["broadcast_scheduled_start_time"]
+            )
         )
+    }
+
+    private static func dateFromTweetScheduledStart(_ value: XTweetResultResponse.Value?) -> Date? {
+        // Tweet card bindings expose scheduled start only as string_value (epoch milliseconds).
+        XBroadcast.date(fromMillisecondsString: value?.stringValue)
     }
 
     private func xLiveVideoSource(mediaKey: String, bearerToken: String, guestToken: String) async throws -> XLiveVideoSource {
@@ -555,8 +617,10 @@ private struct XWebConfiguration {
     var tweetResultByRestIDQueryID: String?
 }
 
-private struct XBroadcast: Decodable {
-    var mediaKey: String
+/// Decodes X `broadcasts/show.json` entries. Internal so tests can cover schedule/media_key edge cases.
+struct XBroadcast: Decodable, Equatable {
+    /// Optional so NOT_STARTED payloads can decode even if X omits media_key.
+    var mediaKey: String?
     var title: String?
     var imageURL: URL?
     var imageURLOriginal: URL?
@@ -567,7 +631,9 @@ private struct XBroadcast: Decodable {
     var thumbnailURLSmall: URL?
     var thumbnailURLMedium: URL?
     var thumbnailURLLarge: URL?
+    var preLiveSlateURL: URL?
     var state: String?
+    var scheduledStartDate: Date?
 
     var bestThumbnailURL: URL? {
         [
@@ -580,6 +646,7 @@ private struct XBroadcast: Decodable {
             thumbnailURLMedium,
             thumbnailURL,
             thumbnailURLSmall,
+            preLiveSlateURL,
         ].compactMap { $0 }.first
     }
 
@@ -588,9 +655,13 @@ private struct XBroadcast: Decodable {
         return state.lowercased() == "running"
     }
 
+    var hasNotStarted: Bool {
+        Self.isNotStartedState(state)
+    }
+
     enum CodingKeys: String, CodingKey {
         case mediaKey = "media_key"
-        case title
+        case title = "status"
         case imageURL = "image_url"
         case imageURLOriginal = "image_url_original"
         case imageURLSmall = "image_url_small"
@@ -600,19 +671,87 @@ private struct XBroadcast: Decodable {
         case thumbnailURLSmall = "thumbnail_url_small"
         case thumbnailURLMedium = "thumbnail_url_medium"
         case thumbnailURLLarge = "thumbnail_url_large"
+        case preLiveSlateURL = "pre_live_slate_url"
         case state
+        case scheduledStartMs = "scheduled_start_ms"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mediaKey = try container.decodeIfPresent(String.self, forKey: .mediaKey)
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+        imageURL = try container.decodeIfPresent(URL.self, forKey: .imageURL)
+        imageURLOriginal = try container.decodeIfPresent(URL.self, forKey: .imageURLOriginal)
+        imageURLSmall = try container.decodeIfPresent(URL.self, forKey: .imageURLSmall)
+        imageURLMedium = try container.decodeIfPresent(URL.self, forKey: .imageURLMedium)
+        imageURLLarge = try container.decodeIfPresent(URL.self, forKey: .imageURLLarge)
+        thumbnailURL = try container.decodeIfPresent(URL.self, forKey: .thumbnailURL)
+        thumbnailURLSmall = try container.decodeIfPresent(URL.self, forKey: .thumbnailURLSmall)
+        thumbnailURLMedium = try container.decodeIfPresent(URL.self, forKey: .thumbnailURLMedium)
+        thumbnailURLLarge = try container.decodeIfPresent(URL.self, forKey: .thumbnailURLLarge)
+        preLiveSlateURL = try container.decodeIfPresent(URL.self, forKey: .preLiveSlateURL)
+        state = try container.decodeIfPresent(String.self, forKey: .state)
+        // String or number epoch-ms (X has shipped both shapes for similar fields).
+        scheduledStartDate = try container.decodeIfPresent(FlexibleMillisecondsDate.self, forKey: .scheduledStartMs)?.date
+    }
+
+    static func isNotStartedState(_ state: String?) -> Bool {
+        guard let state else { return false }
+        switch state.lowercased() {
+        case "not_started", "pre_published":
+            return true
+        default:
+            return false
+        }
+    }
+
+    static func date(fromMillisecondsString value: String?) -> Date? {
+        guard let value, let milliseconds = Double(value) else { return nil }
+        return Date(timeIntervalSince1970: milliseconds / 1_000)
+    }
+}
+
+/// Accepts X epoch-ms fields as either JSON string or number.
+struct FlexibleMillisecondsDate: Decodable, Equatable {
+    var date: Date?
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            date = nil
+            return
+        }
+        if let string = try? container.decode(String.self) {
+            date = XBroadcast.date(fromMillisecondsString: string)
+            return
+        }
+        if let int = try? container.decode(Int64.self) {
+            date = Date(timeIntervalSince1970: Double(int) / 1_000)
+            return
+        }
+        if let double = try? container.decode(Double.self) {
+            date = Date(timeIntervalSince1970: double / 1_000)
+            return
+        }
+        date = nil
     }
 }
 
 private struct XTweetBroadcast {
-    var mediaKey: String
+    /// Optional so NOT_STARTED tweet cards can decode even if X omits media_key.
+    var mediaKey: String?
     var title: String?
     var thumbnailURL: URL?
     var state: String?
+    var scheduledStartDate: Date?
 
     var isLive: Bool? {
         guard let state else { return nil }
-        return state.lowercased() != "ended"
+        return state.lowercased() == "running"
+    }
+
+    var hasNotStarted: Bool {
+        XBroadcast.isNotStartedState(state)
     }
 }
 

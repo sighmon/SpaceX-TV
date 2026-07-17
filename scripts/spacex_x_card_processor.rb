@@ -119,13 +119,22 @@ class SpaceXXCardProcessor
 
     if linked_broadcast_url
       resolved = resolve_broadcast(linked_broadcast_url)
+      stream_url = resolved[:stream_url]
+      # Not-started livestreams are still useful cards (UPCOMING). Re-check soon so
+      # the stream URL appears once X starts the HLS endpoint.
+      ttl = if resolved[:is_live] || stream_url.nil?
+        LIVE_TTL
+      else
+        REPLAY_TTL
+      end
       return card_entry(
         fingerprint: fingerprint,
-        stream_url: resolved[:stream_url],
+        stream_url: stream_url,
         thumbnail_url: thumbnail_url || resolved[:thumbnail_url],
         is_live: resolved[:is_live],
         content_kind: "video",
-        ttl: resolved[:is_live] ? LIVE_TTL : REPLAY_TTL
+        has_usable_content: true,
+        ttl: ttl
       )
     end
 
@@ -306,6 +315,19 @@ class SpaceXXCardProcessor
         bearer_token: configuration.fetch(:bearer_token),
         guest_token: guest_token
       ).fetch("broadcasts").fetch(broadcast_id)
+
+      # X publishes the card (and scheduled start) before the HLS endpoint exists.
+      if not_started_broadcast_state?(broadcast["state"])
+        # page_thumbnail_for already soft-fails to nil on scrape errors.
+        thumbnail = best_broadcast_thumbnail(broadcast) ||
+          page_thumbnail_for("https://x.com/i/broadcasts/#{broadcast_id}")
+        return {
+          stream_url: nil,
+          thumbnail_url: thumbnail,
+          is_live: false
+        }
+      end
+
       media_key = broadcast.fetch("media_key")
       source = live_video_source(media_key, configuration.fetch(:bearer_token), guest_token)
       thumbnail_url = best_broadcast_thumbnail(broadcast) || source["thumbnail_url"] || source["image_url"]
@@ -337,26 +359,41 @@ class SpaceXXCardProcessor
     )
     bindings = response.dig("data", "tweetResult", "result", "card", "legacy", "binding_values")
     values = Array(bindings).to_h { |binding| [binding["key"], binding["value"]] }
-    media_key = values.dig("broadcast_media_key", "string_value")
-    raise "Tweet broadcast has no media key" unless media_key
-
-    source = live_video_source(media_key, configuration.fetch(:bearer_token), guest_token)
     state = values.dig("broadcast_state", "string_value")
     thumbnails = %w[
       broadcast_thumbnail_original broadcast_thumbnail_x_large broadcast_thumbnail
       broadcast_pre_live_slate_x_large
     ].filter_map { |key| values.dig(key, "image_value", "url") }
+
+    # Check state before requiring media_key — pre-live cards may omit it.
+    if not_started_broadcast_state?(state)
+      return {
+        stream_url: nil,
+        thumbnail_url: thumbnails.first,
+        is_live: false
+      }
+    end
+
+    media_key = values.dig("broadcast_media_key", "string_value")
+    raise "Tweet broadcast has no media key" unless media_key
+
+    source = live_video_source(media_key, configuration.fetch(:bearer_token), guest_token)
     {
       stream_url: source["noRedirectPlaybackUrl"] || source["location"],
       thumbnail_url: thumbnails.first || source["thumbnail_url"] || source["image_url"],
-      is_live: state ? state.downcase != "ended" : nil
+      is_live: state&.downcase == "running"
     }
+  end
+
+  def not_started_broadcast_state?(state)
+    %w[not_started pre_published].include?(state&.downcase)
   end
 
   def best_broadcast_thumbnail(broadcast)
     %w[
       image_url_original image_url_large image_url_medium image_url image_url_small
       thumbnail_url_large thumbnail_url_medium thumbnail_url thumbnail_url_small
+      pre_live_slate_url
     ].filter_map { |key| broadcast[key] }.first
   end
 

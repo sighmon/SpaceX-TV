@@ -6,7 +6,7 @@ final class PlayerViewModel: ObservableObject {
     enum State: Equatable {
         case resolving
         case ready(URL, String, Int, Double?)
-        case failed(String)
+        case failed(title: String, message: String, systemImage: String)
     }
 
     @Published private(set) var state: State = .resolving
@@ -39,9 +39,9 @@ final class PlayerViewModel: ObservableObject {
             await preflight(resolved.streamURL)
             state = .ready(resolved.streamURL, videoPlayerTitle(resolved.title ?? broadcast.title), playbackGeneration, nil)
         } catch {
-            let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            debugLines.append("Resolve failed: \(message)")
-            state = .failed(message)
+            let failure = Self.playbackFailure(from: error)
+            debugLines.append("Resolve failed: \(failure.message)")
+            state = .failed(title: failure.title, message: failure.message, systemImage: failure.systemImage)
         }
     }
 
@@ -98,7 +98,7 @@ final class PlayerViewModel: ObservableObject {
         if broadcast.fallbackStreamURL != nil {
             let message = "Both available playback formats stalled."
             log(message)
-            state = .failed(message)
+            state = .failed(title: "Stream unavailable", message: message, systemImage: "exclamationmark.triangle")
             return
         }
 
@@ -120,10 +120,28 @@ final class PlayerViewModel: ObservableObject {
             state = .ready(resolved.streamURL, videoPlayerTitle(resolved.title ?? broadcast.title), playbackGeneration, resumePosition)
             Task { await preflight(resolved.streamURL) }
         } catch {
-            let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            log("Stream refresh failed: \(message)")
-            state = .failed(message)
+            let failure = Self.playbackFailure(from: error)
+            log("Stream refresh failed: \(failure.message)")
+            state = .failed(title: failure.title, message: failure.message, systemImage: failure.systemImage)
         }
+    }
+
+    private static func playbackFailure(from error: Error) -> (title: String, message: String, systemImage: String) {
+        if let resolverError = error as? BroadcastResolverError {
+            let systemImage: String
+            if case .notStarted = resolverError {
+                systemImage = "clock"
+            } else {
+                systemImage = "exclamationmark.triangle"
+            }
+            return (
+                resolverError.failureTitle,
+                resolverError.errorDescription ?? error.localizedDescription,
+                systemImage
+            )
+        }
+        let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        return ("Stream unavailable", message, "exclamationmark.triangle")
     }
 
     private func log(_ line: String) {
@@ -321,11 +339,11 @@ struct PlayerScreen: View {
                     }
                 }
                 // .navigationTitle(title)
-            case .failed(let message):
+            case .failed(let title, let message, let systemImage):
                 VStack(alignment: .leading, spacing: 24) {
                     ContentUnavailableView(
-                        "Stream unavailable",
-                        systemImage: "exclamationmark.triangle",
+                        title,
+                        systemImage: systemImage,
                         description: Text(message)
                     )
                     if library.showsPlayerDebugOverlay {
