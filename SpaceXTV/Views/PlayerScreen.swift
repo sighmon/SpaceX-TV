@@ -23,6 +23,16 @@ final class PlayerViewModel: ObservableObject {
         self.broadcast = broadcast
     }
 
+#if DEBUG
+    /// Seeds a fixed state for Xcode previews (skips network resolve).
+    init(previewState: State, broadcast: Broadcast) {
+        self.broadcast = broadcast
+        self.hasStarted = true
+        self.state = previewState
+        self.debugLines = ["Preview: \(previewState)"]
+    }
+#endif
+
     func start() async {
         guard !hasStarted else { return }
         hasStarted = true
@@ -269,6 +279,12 @@ struct PlayerScreen: View {
         _model = StateObject(wrappedValue: PlayerViewModel(broadcast: broadcast))
     }
 
+#if DEBUG
+    init(previewState: PlayerViewModel.State, broadcast: Broadcast) {
+        _model = StateObject(wrappedValue: PlayerViewModel(previewState: previewState, broadcast: broadcast))
+    }
+#endif
+
     var body: some View {
         Group {
             switch model.state {
@@ -351,8 +367,12 @@ struct PlayerScreen: View {
                     }
                 }
                 .padding(60)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        // Match app-wide dark palette so failed states (not-started and stream unavailable)
+        // share the same ContentUnavailableView colors in-app and in previews.
+        .preferredColorScheme(.dark)
         .toolbar(hidesNavigationBar ? .hidden : .automatic, for: .navigationBar)
 #if !os(tvOS)
         .statusBarHidden(hidesStatusBar)
@@ -1223,3 +1243,53 @@ private struct PlayerDebugOverlay: View {
         .background(.black.opacity(0.62), in: RoundedRectangle(cornerRadius: 8))
     }
 }
+
+#if DEBUG
+private extension Broadcast {
+    static let previewNotStarted = Broadcast(
+        id: UUID(uuidString: "C0FFEE00-1111-4222-8333-000000000001")!,
+        title: "Starship's Thirteenth Flight Test",
+        subtitle: "Livestream not started",
+        sourceURL: URL(string: "https://x.com/i/broadcasts/preview-not-started")!,
+        sourceKind: .xBroadcast,
+        tweetText: "Watch Starship's thirteenth flight test",
+        publishedAt: Date().addingTimeInterval(-2 * 60 * 60),
+        thumbnailURL: URL(string: "https://pbs.twimg.com/media/HNWqJ_TXcAADsAJ.jpg"),
+        artworkName: "play.tv",
+        isLive: false,
+        isUpcoming: true
+    )
+}
+
+#Preview("Livestream not started") {
+    let start = Date().addingTimeInterval(45 * 60)
+    let message = BroadcastResolverError.notStartedMessage(scheduledStart: start)
+    NavigationStack {
+        PlayerScreen(
+            previewState: .failed(
+                title: "Livestream not started",
+                message: message,
+                systemImage: "clock"
+            ),
+            broadcast: .previewNotStarted
+        )
+    }
+    .environmentObject(BroadcastLibrary(previewBroadcasts: [.previewNotStarted]))
+    .preferredColorScheme(.dark)
+}
+
+#Preview("Stream unavailable") {
+    NavigationStack {
+        PlayerScreen(
+            previewState: .failed(
+                title: "Stream unavailable",
+                message: "No playable HLS or MP4 stream was found for this broadcast.",
+                systemImage: "exclamationmark.triangle"
+            ),
+            broadcast: .previewNotStarted
+        )
+    }
+    .environmentObject(BroadcastLibrary(previewBroadcasts: [.previewNotStarted]))
+    .preferredColorScheme(.dark)
+}
+#endif

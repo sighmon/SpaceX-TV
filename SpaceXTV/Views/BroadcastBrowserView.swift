@@ -1150,12 +1150,14 @@ private extension Broadcast {
         Broadcast(
             id: UUID(uuidString: "A1B2C3D4-E5F6-7890-ABCD-EF1234567890")!,
             title: "Starship's Thirteenth Flight Test",
-            subtitle: "Starship flight test",
-            sourceURL: URL(string: "https://www.spacex.com/launches/starship-flight-13")!,
+            subtitle: "Livestream not started",
+            sourceURL: URL(string: "https://x.com/i/broadcasts/preview-not-started")!,
             sourceKind: .xBroadcast,
-            tweetText: "Starship’s thirteenth flight test is preparing to launch.",
-            thumbnailURL: URL(string: "https://example.com/starship-flight-13.jpg"),
+            tweetText: "Watch Starship's thirteenth flight test — live coverage has not started yet.",
+            publishedAt: Date().addingTimeInterval(-2 * 60 * 60),
+            thumbnailURL: URL(string: "https://pbs.twimg.com/media/HNWqJ_TXcAADsAJ.jpg"),
             artworkName: "play.tv",
+            isLive: false,
             isUpcoming: true
         ),
         Broadcast(
