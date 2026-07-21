@@ -133,7 +133,7 @@ struct MediaCollectionScreen: View {
                 actionSymbolOverride: entry.systemImage
             )
             .frame(width: width)
-            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .contentShape(BroadcastCard.shape)
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()

@@ -235,7 +235,6 @@ struct BroadcastBrowserView: View {
             }
             .padding(.horizontal, 18)
             .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
-            .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
         } else if let nextLaunchError {
             Label(nextLaunchError, systemImage: "clock.badge.exclamationmark")
                 .font(.callout.weight(.semibold))
@@ -425,7 +424,7 @@ struct BroadcastBrowserView: View {
         } label: {
             BroadcastCard(broadcast: broadcast, isFocused: focusedID == broadcast.id)
                 .frame(width: width)
-                .contentShape(RoundedRectangle(cornerRadius: 8))
+                .contentShape(BroadcastCard.shape)
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()
@@ -796,6 +795,17 @@ struct BroadcastCard: View {
     /// When set, overrides the trailing action glyph.
     var actionSymbolOverride: String? = nil
 
+    /// Continuous radius aligned with system focus lockups on tvOS; tighter on iOS.
+#if os(tvOS)
+    static let cornerRadius: CGFloat = 32
+#else
+    static let cornerRadius: CGFloat = 8
+#endif
+
+    static var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+    }
+
     private let aspectRatio: CGFloat = 16.0 / 9.0
     private let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -834,14 +844,8 @@ struct BroadcastCard: View {
                     .padding(14)
             }
             .frame(maxWidth: .infinity)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .background(.white.opacity(isFocused ? 0.20 : 0.08), in: RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                if isFocused {
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(.white.opacity(0.65), lineWidth: 4)
-                }
-            }
+            .clipShape(Self.shape)
+            .background(.white.opacity(isFocused ? 0.20 : 0.08), in: Self.shape)
             .scaleEffect(isFocused ? 1.04 : 1)
             .animation(.easeOut(duration: 0.16), value: isFocused)
     }
