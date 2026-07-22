@@ -411,10 +411,19 @@ struct BroadcastResolver {
         var bearerToken = webBearerToken(in: home)
         var tweetResultQueryID = tweetResultByRestIDQueryID(in: home)
 
-        let scriptURLs = webScriptURLs(in: home)
-        for scriptURL in scriptURLs.prefix(10) {
-            guard bearerToken == nil || tweetResultQueryID == nil else {
-                break
+        // X's logged-out SPA only links an entry module; guest-token and other
+        // chunks are relative imports. Expand the module graph, then fetch in
+        // priority order (guest-token first).
+        var candidates = webScriptURLs(in: home)
+        var visited = Set<URL>()
+        let maxFetches = 15
+
+        while !candidates.isEmpty,
+              visited.count < maxFetches,
+              bearerToken == nil || tweetResultQueryID == nil {
+            let scriptURL = candidates.removeFirst()
+            guard visited.insert(scriptURL).inserted else {
+                continue
             }
 
             let script = try await string(from: scriptURL)
@@ -424,6 +433,18 @@ struct BroadcastResolver {
             if tweetResultQueryID == nil {
                 tweetResultQueryID = tweetResultByRestIDQueryID(in: script)
             }
+
+            let discovered = webScriptURLs(in: script, baseURL: scriptURL)
+            guard !discovered.isEmpty else {
+                continue
+            }
+
+            var merged: [URL] = []
+            var seen = visited
+            for url in prioritizeWebScripts(discovered + candidates) where seen.insert(url).inserted {
+                merged.append(url)
+            }
+            candidates = merged
         }
 
         guard let bearerToken else {
@@ -450,21 +471,58 @@ struct BroadcastResolver {
         return body
     }
 
-    func webScriptURLs(in body: String) -> [URL] {
-        let pattern = #"https:\/\/abs\.twimg\.com\/(?:responsive-web\/client-web|x-web\/x-web\/assets)\/[^"'<>\s]+\.js"#
-        let regex = try? NSRegularExpression(pattern: pattern)
-        let range = NSRange(body.startIndex ..< body.endIndex, in: body)
-        let matches = regex?.matches(in: body, range: range) ?? []
+    /// Collect absolute CDN script URLs from HTML/JS, plus relative ES-module
+    /// imports when `baseURL` is the module that declared them.
+    func webScriptURLs(in body: String, baseURL: URL? = nil) -> [URL] {
+        var urls: [URL] = []
         var seen = Set<URL>()
-        let urls = matches.compactMap { match -> URL? in
-            guard let range = Range(match.range, in: body),
-                  let url = URL(string: String(body[range])) else {
-                return nil
+
+        let absolutePattern = #"https:\/\/abs\.twimg\.com\/(?:responsive-web\/client-web|x-web\/x-web)\/[^"'<>\s]+\.js"#
+        if let regex = try? NSRegularExpression(pattern: absolutePattern) {
+            let range = NSRange(body.startIndex ..< body.endIndex, in: body)
+            for match in regex.matches(in: body, range: range) {
+                guard let range = Range(match.range, in: body),
+                      let url = URL(string: String(body[range])),
+                      seen.insert(url).inserted else {
+                    continue
+                }
+                urls.append(url)
             }
-            return seen.insert(url).inserted ? url : nil
         }
 
-        return urls.sorted { lhs, rhs in
+        if let baseURL {
+            let relativePattern = #"["']((?:\./|\.\./)?(?:assets/)?[^"'<>\s]+\.js)["']"#
+            if let regex = try? NSRegularExpression(pattern: relativePattern) {
+                let range = NSRange(body.startIndex ..< body.endIndex, in: body)
+                for match in regex.matches(in: body, range: range) {
+                    guard match.numberOfRanges > 1,
+                          let relativeRange = Range(match.range(at: 1), in: body) else {
+                        continue
+                    }
+                    let relative = String(body[relativeRange])
+                    if relative.hasPrefix("http://") || relative.hasPrefix("https://") {
+                        continue
+                    }
+                    // Ignore bare package-style paths that are not under this CDN module tree.
+                    guard relative.hasPrefix("./")
+                        || relative.hasPrefix("../")
+                        || relative.hasPrefix("assets/") else {
+                        continue
+                    }
+                    guard let url = URL(string: relative, relativeTo: baseURL)?.absoluteURL,
+                          seen.insert(url).inserted else {
+                        continue
+                    }
+                    urls.append(url)
+                }
+            }
+        }
+
+        return prioritizeWebScripts(urls)
+    }
+
+    func prioritizeWebScripts(_ urls: [URL]) -> [URL] {
+        urls.sorted { lhs, rhs in
             let lhsPriority = webScriptPriority(lhs)
             let rhsPriority = webScriptPriority(rhs)
             if lhsPriority != rhsPriority {
@@ -475,19 +533,23 @@ struct BroadcastResolver {
     }
 
     private func webScriptPriority(_ url: URL) -> Int {
-        if url.lastPathComponent.hasPrefix("guest-token-") {
+        let name = url.lastPathComponent
+        if name.hasPrefix("guest-token-") {
             return 0
         }
-        if url.lastPathComponent.hasPrefix("main.") {
+        if name.hasPrefix("main.") {
             return 1
         }
-        return 2
+        if name.hasPrefix("entry-") || name.contains("entry-client") {
+            return 2
+        }
+        return 3
     }
 
     private func webBearerToken(in body: String) -> String? {
         let patterns = [
             #"Bearer ([A-Za-z0-9%._-]+)"#,
-            #""(AAAAAAAA[A-Za-z0-9%._-]+)""#,
+            #"["'`](AAAAAAAA[A-Za-z0-9%._-]+)["'`]"#,
         ]
 
         for pattern in patterns {
@@ -509,6 +571,9 @@ struct BroadcastResolver {
     private func tweetResultByRestIDQueryID(in body: String) -> String? {
         firstMatch(
             pattern: #"queryId:"([^"]+)",operationName:"TweetResultByRestId""#,
+            in: body
+        ) ?? firstMatch(
+            pattern: #"operationName:"TweetResultByRestId",queryId:"([^"]+)""#,
             in: body
         )
     }

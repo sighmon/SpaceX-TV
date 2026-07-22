@@ -415,6 +415,7 @@ final class CardResolutionCacheTests: XCTestCase {
         let body = """
         <link href="https://abs.twimg.com/x-web/x-web/assets/chunk-current.js">
         <script src="https://abs.twimg.com/responsive-web/client-web/main.legacy.js"></script>
+        <script type="module" src="https://abs.twimg.com/x-web/x-web/entry-client-logged-out-abc.js"></script>
         <link href="https://abs.twimg.com/x-web/x-web/assets/guest-token-current.js">
         """
 
@@ -425,9 +426,25 @@ final class CardResolutionCacheTests: XCTestCase {
             [
                 "https://abs.twimg.com/x-web/x-web/assets/guest-token-current.js",
                 "https://abs.twimg.com/responsive-web/client-web/main.legacy.js",
+                "https://abs.twimg.com/x-web/x-web/entry-client-logged-out-abc.js",
                 "https://abs.twimg.com/x-web/x-web/assets/chunk-current.js",
             ]
         )
+    }
+
+    func testResolvesRelativeModuleImportsFromEntryScript() {
+        let entry = """
+        import{a}from"./assets/guest-token-BlE1zlHf.js";
+        import{b}from"./assets/rolldown-runtime-CVOSB.js";
+        const map=["assets/guest-token-BlE1zlHf.js","assets/other-chunk.js"];
+        """
+        let base = URL(string: "https://abs.twimg.com/x-web/x-web/entry-client-logged-out-Z7.js")!
+
+        let urls = BroadcastResolver().webScriptURLs(in: entry, baseURL: base).map(\.absoluteString)
+
+        XCTAssertEqual(urls.first, "https://abs.twimg.com/x-web/x-web/assets/guest-token-BlE1zlHf.js")
+        XCTAssertTrue(urls.contains("https://abs.twimg.com/x-web/x-web/assets/rolldown-runtime-CVOSB.js"))
+        XCTAssertTrue(urls.contains("https://abs.twimg.com/x-web/x-web/assets/other-chunk.js"))
     }
 
     func testSpaceXYouTubeWebcastCreatesWatchURL() {

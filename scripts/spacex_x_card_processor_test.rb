@@ -249,6 +249,7 @@ class SpaceXXCardProcessorTest < Minitest::Test
     body = <<~HTML
       <link href="https://abs.twimg.com/x-web/x-web/assets/chunk-current.js">
       <script src="https://abs.twimg.com/responsive-web/client-web/main.legacy.js"></script>
+      <script type="module" src="https://abs.twimg.com/x-web/x-web/entry-client-logged-out-abc.js"></script>
       <link href="https://abs.twimg.com/x-web/x-web/assets/guest-token-current.js">
     HTML
 
@@ -256,10 +257,39 @@ class SpaceXXCardProcessorTest < Minitest::Test
       [
         "https://abs.twimg.com/x-web/x-web/assets/guest-token-current.js",
         "https://abs.twimg.com/responsive-web/client-web/main.legacy.js",
+        "https://abs.twimg.com/x-web/x-web/entry-client-logged-out-abc.js",
         "https://abs.twimg.com/x-web/x-web/assets/chunk-current.js"
       ],
       processor.send(:web_script_urls, body)
     )
+  end
+
+  def test_resolves_relative_module_imports_from_entry_script
+    processor = StubProcessor.new(now: NOW)
+    entry = <<~JS
+      import{a}from"./assets/guest-token-BlE1zlHf.js";
+      import{b}from"./assets/rolldown-runtime-CVOSB.js";
+      const map=["assets/guest-token-BlE1zlHf.js","assets/other-chunk.js"];
+    JS
+    base = "https://abs.twimg.com/x-web/x-web/entry-client-logged-out-Z7.js"
+
+    urls = processor.send(:web_script_urls, entry, base_url: base)
+
+    assert_equal(
+      "https://abs.twimg.com/x-web/x-web/assets/guest-token-BlE1zlHf.js",
+      urls.first
+    )
+    assert_includes urls, "https://abs.twimg.com/x-web/x-web/assets/rolldown-runtime-CVOSB.js"
+    assert_includes urls, "https://abs.twimg.com/x-web/x-web/assets/other-chunk.js"
+  end
+
+  def test_extracts_bearer_token_from_quoted_and_template_forms
+    processor = StubProcessor.new(now: NOW)
+    token = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+
+    assert_equal token, processor.send(:web_bearer_token, "Authorization:`Bearer #{token}`")
+    assert_equal token, processor.send(:web_bearer_token, %(return`#{token}`))
+    assert_equal token, processor.send(:web_bearer_token, %("authorization":"Bearer #{token}"))
   end
 
   private

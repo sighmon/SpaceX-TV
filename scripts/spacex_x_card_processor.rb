@@ -419,40 +419,85 @@ class SpaceXXCardProcessor
     home = request_text("https://x.com/")
     bearer_token = web_bearer_token(home)
     query_id = tweet_result_query_id(home)
-    web_script_urls(home).first(10).each do |script_url|
-      break if bearer_token && query_id
 
+    # X's logged-out SPA only links an entry module; guest-token and other
+    # chunks are relative imports. Expand the module graph, then fetch in
+    # priority order (guest-token first).
+    candidates = web_script_urls(home)
+    visited = {}
+    max_fetches = 15
+
+    while candidates.any? && visited.size < max_fetches && !(bearer_token && query_id)
+      script_url = candidates.shift
+      next if visited[script_url]
+
+      visited[script_url] = true
       script = request_text(script_url)
       bearer_token ||= web_bearer_token(script)
       query_id ||= tweet_result_query_id(script)
+
+      discovered = web_script_urls(script, base_url: script_url)
+      next if discovered.empty?
+
+      remaining = candidates
+      candidates = prioritize_web_scripts((discovered + remaining).uniq)
+      candidates.reject! { |url| visited[url] }
     end
+
     raise "Could not find X web bearer token" unless bearer_token
 
     @web_configuration = { bearer_token: bearer_token, query_id: query_id }
   end
 
-  def web_script_urls(body)
-    body.scan(
-      %r{https://abs\.twimg\.com/(?:responsive-web/client-web|x-web/x-web/assets)/[^"'<>\s]+\.js}
-    ).uniq.sort_by do |url|
+  # Collect absolute CDN script URLs from HTML/JS, plus relative ES-module
+  # imports when +base_url+ is the module that declared them.
+  def web_script_urls(body, base_url: nil)
+    urls = body.scan(
+      %r{https://abs\.twimg\.com/(?:responsive-web/client-web|x-web/x-web)/[^"'<>\s]+\.js}
+    )
+
+    if base_url
+      base = URI(base_url)
+      body.scan(%r{["']((?:\./|\.\./)?(?:assets/)?[^"'<>\s]+\.js)["']}).flatten.each do |relative|
+        next if relative.start_with?("http://", "https://")
+        # Ignore bare package-style paths that are not under this CDN module tree.
+        next unless relative.start_with?("./", "../", "assets/")
+
+        begin
+          urls << URI.join(base, relative).to_s
+        rescue URI::InvalidURIError
+          next
+        end
+      end
+    end
+
+    prioritize_web_scripts(urls.uniq)
+  end
+
+  def prioritize_web_scripts(urls)
+    urls.sort_by do |url|
       filename = File.basename(URI(url).path)
       priority = if filename.start_with?("guest-token-")
         0
       elsif filename.start_with?("main.")
         1
-      else
+      elsif filename.start_with?("entry-") || filename.include?("entry-client")
         2
+      else
+        3
       end
       [priority, url]
     end
   end
 
   def web_bearer_token(body)
-    body[/Bearer ([A-Za-z0-9%._-]+)/, 1] || body[/"(AAAAAAAA[A-Za-z0-9%._-]+)"/, 1]
+    body[/Bearer ([A-Za-z0-9%._-]+)/, 1] ||
+      body[/["'`](AAAAAAAA[A-Za-z0-9%._-]+)["'`]/, 1]
   end
 
   def tweet_result_query_id(body)
-    body[/queryId:"([^"]+)",operationName:"TweetResultByRestId"/, 1]
+    body[/queryId:"([^"]+)",operationName:"TweetResultByRestId"/, 1] ||
+      body[/operationName:"TweetResultByRestId",queryId:"([^"]+)"/, 1]
   end
 
   def stream_from_page(url)
