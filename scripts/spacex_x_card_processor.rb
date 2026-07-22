@@ -5,6 +5,10 @@ require "time"
 require "uri"
 
 class SpaceXXCardProcessor
+  # Configuration failures that must abort the whole cache job so a partial
+  # processed_cards payload is never written over a previously good cache.
+  class FatalWebConfigurationError < RuntimeError; end
+
   CACHE_VERSION = 4
   REPLAY_TTL = 7 * 24 * 60 * 60
   LIVE_TTL = 15 * 60
@@ -166,6 +170,10 @@ class SpaceXXCardProcessor
         ttl: NEGATIVE_TTL
       )
     end
+  rescue FatalWebConfigurationError
+    # Missing X web guest credentials would leave livestream cards unplayable.
+    # Fail the job so the previous cache file is left in place.
+    raise
   rescue StandardError => error
     @logger.call("Could not process card #{post["id"]}: #{error.class}: #{error.message}")
     nil
@@ -444,7 +452,9 @@ class SpaceXXCardProcessor
       candidates.reject! { |url| visited[url] }
     end
 
-    raise "Could not find X web bearer token" unless bearer_token
+    unless bearer_token
+      raise FatalWebConfigurationError, "Could not find X web bearer token"
+    end
 
     @web_configuration = { bearer_token: bearer_token, query_id: query_id }
   end

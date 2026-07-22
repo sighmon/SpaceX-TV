@@ -292,6 +292,46 @@ class SpaceXXCardProcessorTest < Minitest::Test
     assert_equal token, processor.send(:web_bearer_token, %("authorization":"Bearer #{token}"))
   end
 
+  class MissingWebBearerProcessor < SpaceXXCardProcessor
+    private
+
+    def resolve_broadcast(_value)
+      raise FatalWebConfigurationError, "Could not find X web bearer token"
+    end
+  end
+
+  def test_missing_web_bearer_aborts_the_whole_job
+    value = response
+    value["data"] = value.fetch("data").select { |post| post.fetch("id") == "broadcast" }
+
+    error = assert_raises(SpaceXXCardProcessor::FatalWebConfigurationError) do
+      MissingWebBearerProcessor.new(now: NOW).process(value)
+    end
+
+    assert_match(/Could not find X web bearer token/, error.message)
+  end
+
+  class TransientCardFailureProcessor < SpaceXXCardProcessor
+    private
+
+    def resolve_broadcast(_value)
+      raise "temporary upstream glitch"
+    end
+  end
+
+  def test_non_fatal_card_errors_still_skip_only_that_card
+    value = response
+    value["data"] = [
+      value.fetch("data").find { |post| post.fetch("id") == "broadcast" },
+      value.fetch("data").find { |post| post.fetch("id") == "video" }
+    ]
+
+    entries = TransientCardFailureProcessor.new(now: NOW).process(value).fetch("entries")
+
+    refute entries.key?("post:broadcast")
+    assert entries.key?("post:video")
+  end
+
   private
 
   def response
