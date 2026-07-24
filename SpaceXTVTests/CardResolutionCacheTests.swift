@@ -447,6 +447,33 @@ final class CardResolutionCacheTests: XCTestCase {
         XCTAssertTrue(urls.contains("https://abs.twimg.com/x-web/x-web/assets/other-chunk.js"))
     }
 
+    func testBareAssetsImportsFromAssetsModuleDoNotDoubleAssetsPath() {
+        let resolver = BroadcastResolver()
+        let underAssets = URL(string: "https://abs.twimg.com/x-web/x-web/assets/fetcher-kZhW7aEb.js")!
+        let entry = URL(string: "https://abs.twimg.com/x-web/x-web/entry-client-logged-out-Z7.js")!
+
+        XCTAssertEqual(
+            resolver.xWebPackageRoot(from: underAssets).absoluteString,
+            "https://abs.twimg.com/x-web/x-web/"
+        )
+        XCTAssertEqual(
+            resolver.xWebPackageRoot(from: entry).absoluteString,
+            "https://abs.twimg.com/x-web/x-web/"
+        )
+
+        // Bare package-root map entries discovered while expanding an assets/* chunk.
+        let chunk = """
+        const map=["assets/guest-token-DiSJzCHN.js","assets/other-chunk.js"];
+        import{a}from"./utils-Bde6ceBn.js";
+        """
+        let urls = resolver.webScriptURLs(in: chunk, baseURL: underAssets).map(\.absoluteString)
+
+        XCTAssertEqual(urls.first, "https://abs.twimg.com/x-web/x-web/assets/guest-token-DiSJzCHN.js")
+        XCTAssertTrue(urls.contains("https://abs.twimg.com/x-web/x-web/assets/other-chunk.js"))
+        XCTAssertTrue(urls.contains("https://abs.twimg.com/x-web/x-web/assets/utils-Bde6ceBn.js"))
+        XCTAssertFalse(urls.contains { $0.contains("/assets/assets/") })
+    }
+
     func testSpaceXYouTubeWebcastCreatesWatchURL() {
         let webcast = SpaceXWebcast(
             videoId: "gjCSJIAKEPM",

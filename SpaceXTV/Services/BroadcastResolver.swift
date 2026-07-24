@@ -426,7 +426,13 @@ struct BroadcastResolver {
                 continue
             }
 
-            let script = try await string(from: scriptURL)
+            // One bad relative URL (e.g. doubled assets/) must not abort guest auth.
+            let script: String
+            do {
+                script = try await string(from: scriptURL)
+            } catch {
+                continue
+            }
             if bearerToken == nil {
                 bearerToken = webBearerToken(in: script)
             }
@@ -477,7 +483,8 @@ struct BroadcastResolver {
         var urls: [URL] = []
         var seen = Set<URL>()
 
-        let absolutePattern = #"https:\/\/abs\.twimg\.com\/(?:responsive-web\/client-web|x-web\/x-web)\/[^"'<>\s]+\.js"#
+        // Require a real `.js` suffix (not `.jsxs` / `.json` fragments in minified bundles).
+        let absolutePattern = #"https:\/\/abs\.twimg\.com\/(?:responsive-web\/client-web|x-web\/x-web)\/[^"'<>\s`]+\.js\b"#
         if let regex = try? NSRegularExpression(pattern: absolutePattern) {
             let range = NSRange(body.startIndex ..< body.endIndex, in: body)
             for match in regex.matches(in: body, range: range) {
@@ -491,7 +498,7 @@ struct BroadcastResolver {
         }
 
         if let baseURL {
-            let relativePattern = #"["']((?:\./|\.\./)?(?:assets/)?[^"'<>\s]+\.js)["']"#
+            let relativePattern = #"["']((?:\./|\.\./)?(?:assets/)?[^"'<>\s`]+\.js)["']"#
             if let regex = try? NSRegularExpression(pattern: relativePattern) {
                 let range = NSRange(body.startIndex ..< body.endIndex, in: body)
                 for match in regex.matches(in: body, range: range) {
@@ -509,7 +516,11 @@ struct BroadcastResolver {
                         || relative.hasPrefix("assets/") else {
                         continue
                     }
-                    guard let url = URL(string: relative, relativeTo: baseURL)?.absoluteURL,
+                    // Reject accidental matches where `.js` is only a prefix (e.g. `.jsxs`).
+                    guard relative.hasSuffix(".js") else {
+                        continue
+                    }
+                    guard let url = resolveWebScriptURL(relative: relative, baseURL: baseURL),
                           seen.insert(url).inserted else {
                         continue
                     }
@@ -519,6 +530,41 @@ struct BroadcastResolver {
         }
 
         return prioritizeWebScripts(urls)
+    }
+
+    /// Resolves relative ES-module paths from an X CDN script.
+    ///
+    /// Bare `assets/...` paths are package-root relative (same as from the entry
+    /// module). Resolving them with `URL(string:relativeTo:)` against a script
+    /// already under `/assets/` produces a doubled `assets/assets/` path that 404s
+    /// and used to abort guest-token discovery before pre-live broadcasts could
+    /// be classified as not-started.
+    func resolveWebScriptURL(relative: String, baseURL: URL) -> URL? {
+        if relative.hasPrefix("assets/") {
+            return URL(string: relative, relativeTo: xWebPackageRoot(from: baseURL))?.absoluteURL
+        }
+        return URL(string: relative, relativeTo: baseURL)?.absoluteURL
+    }
+
+    /// Directory that contains the entry script and the `assets/` folder.
+    /// e.g. `…/x-web/x-web/assets/foo.js` and `…/x-web/x-web/entry.js` → `…/x-web/x-web/`.
+    func xWebPackageRoot(from url: URL) -> URL {
+        var path = url.path
+        if let assetsRange = path.range(of: "/assets/") {
+            path = String(path[..<assetsRange.lowerBound]) + "/"
+        } else {
+            path = url.deletingLastPathComponent().path
+            if !path.hasSuffix("/") {
+                path += "/"
+            }
+        }
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url.deletingLastPathComponent()
+        }
+        components.path = path
+        components.query = nil
+        components.fragment = nil
+        return components.url ?? url.deletingLastPathComponent()
     }
 
     func prioritizeWebScripts(_ urls: [URL]) -> [URL] {

@@ -74,6 +74,29 @@ class SpaceXXCardProcessorTest < Minitest::Test
     refute processor.send(:not_started_broadcast_state?, nil)
   end
 
+  def test_bare_assets_imports_from_assets_module_do_not_double_path
+    processor = SpaceXXCardProcessor.new(now: NOW)
+    under_assets = "https://abs.twimg.com/x-web/x-web/assets/fetcher-kZhW7aEb.js"
+    entry = "https://abs.twimg.com/x-web/x-web/entry-client-logged-out-Z7.js"
+
+    assert_equal "https://abs.twimg.com/x-web/x-web/", processor.send(:x_web_package_root, under_assets).to_s
+    assert_equal "https://abs.twimg.com/x-web/x-web/", processor.send(:x_web_package_root, entry).to_s
+
+    body = %q{const map=["assets/guest-token-DiSJzCHN.js","assets/other-chunk.js"]; import{a}from"./utils-Bde6ceBn.js";}
+    urls = processor.send(:web_script_urls, body, base_url: under_assets)
+
+    assert_includes urls, "https://abs.twimg.com/x-web/x-web/assets/guest-token-DiSJzCHN.js"
+    assert_includes urls, "https://abs.twimg.com/x-web/x-web/assets/other-chunk.js"
+    assert_includes urls, "https://abs.twimg.com/x-web/x-web/assets/utils-Bde6ceBn.js"
+    refute urls.any? { |url| url.include?("/assets/assets/") }
+  end
+
+  def test_absolute_script_scan_ignores_jsxs_false_positives
+    processor = SpaceXXCardProcessor.new(now: NOW)
+    garbage = 'https://abs.twimg.com/responsive-web/client-web/icon-ios.77d25eba.png`})})]}),(0,m.jsxs)(`div`'
+    assert_empty processor.send(:web_script_urls, garbage)
+  end
+
   class NotStartedPageThumbnailFailsProcessor < SpaceXXCardProcessor
     private
 

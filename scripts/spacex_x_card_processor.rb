@@ -440,7 +440,13 @@ class SpaceXXCardProcessor
       next if visited[script_url]
 
       visited[script_url] = true
-      script = request_text(script_url)
+      # One bad relative URL (e.g. doubled assets/) must not abort guest auth.
+      begin
+        script = request_text(script_url)
+      rescue StandardError => error
+        @logger.call("Skipping X web script #{script_url}: #{error.class}: #{error.message}")
+        next
+      end
       bearer_token ||= web_bearer_token(script)
       query_id ||= tweet_result_query_id(script)
 
@@ -462,19 +468,22 @@ class SpaceXXCardProcessor
   # Collect absolute CDN script URLs from HTML/JS, plus relative ES-module
   # imports when +base_url+ is the module that declared them.
   def web_script_urls(body, base_url: nil)
+    # Require a real `.js` suffix (not `.jsxs` / `.json` fragments in minified bundles).
     urls = body.scan(
-      %r{https://abs\.twimg\.com/(?:responsive-web/client-web|x-web/x-web)/[^"'<>\s]+\.js}
+      %r{https://abs\.twimg\.com/(?:responsive-web/client-web|x-web/x-web)/[^"'<>\s`]+\.js\b}
     )
 
     if base_url
-      base = URI(base_url)
-      body.scan(%r{["']((?:\./|\.\./)?(?:assets/)?[^"'<>\s]+\.js)["']}).flatten.each do |relative|
+      body.scan(%r{["']((?:\./|\.\./)?(?:assets/)?[^"'<>\s`]+\.js)["']}).flatten.each do |relative|
         next if relative.start_with?("http://", "https://")
         # Ignore bare package-style paths that are not under this CDN module tree.
         next unless relative.start_with?("./", "../", "assets/")
+        # Reject accidental matches where `.js` is only a prefix (e.g. `.jsxs`).
+        next unless relative.end_with?(".js")
 
         begin
-          urls << URI.join(base, relative).to_s
+          resolved = resolve_web_script_url(relative, base_url)
+          urls << resolved if resolved
         rescue URI::InvalidURIError
           next
         end
@@ -484,8 +493,35 @@ class SpaceXXCardProcessor
     prioritize_web_scripts(urls.uniq)
   end
 
+  # Bare `assets/...` paths are package-root relative. Joining them against a
+  # script already under `/assets/` produces a doubled `assets/assets/` path
+  # that 404s and used to abort guest-token discovery for pre-live cards.
+  def resolve_web_script_url(relative, base_url)
+    base = if relative.start_with?("assets/")
+      x_web_package_root(base_url)
+    else
+      URI(base_url)
+    end
+    URI.join(base, relative).to_s
+  end
+
+  # Directory that contains the entry script and the `assets/` folder.
+  def x_web_package_root(url)
+    uri = URI(url)
+    path = uri.path.to_s
+    if (index = path.index("/assets/"))
+      uri.path = "#{path[0...index]}/"
+    else
+      uri.path = "#{File.dirname(path)}/"
+      uri.path = "/" if uri.path.empty?
+    end
+    uri.query = nil
+    uri.fragment = nil
+    uri
+  end
+
   def prioritize_web_scripts(urls)
-    urls.sort_by do |url|
+    urls.select { |url| valid_http_url?(url) }.sort_by do |url|
       filename = File.basename(URI(url).path)
       priority = if filename.start_with?("guest-token-")
         0
@@ -498,6 +534,13 @@ class SpaceXXCardProcessor
       end
       [priority, url]
     end
+  end
+
+  def valid_http_url?(value)
+    uri = URI(value)
+    uri.is_a?(URI::HTTP) && !uri.host.to_s.empty?
+  rescue URI::InvalidURIError
+    false
   end
 
   def web_bearer_token(body)
