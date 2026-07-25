@@ -878,9 +878,15 @@ struct BroadcastDiscovery {
             }
 
             let existing = result[existingIndex]
-            if let candidateDate = candidate.publishedAt,
-               let existingDate = existing.publishedAt,
-               candidateDate > existingDate {
+            // Match X: a pinned post stays the card for that stream, even when newer
+            // timeline quotes/reposts share the same broadcast (or title) key.
+            if existing.isPinned {
+                // Keep the pinned candidate.
+            } else if candidate.isPinned {
+                result[existingIndex] = candidate
+            } else if let candidateDate = candidate.publishedAt,
+                      let existingDate = existing.publishedAt,
+                      candidateDate > existingDate {
                 result[existingIndex] = candidate
             }
             keys.forEach { indexByKey[$0] = existingIndex }

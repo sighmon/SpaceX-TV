@@ -370,6 +370,60 @@ final class CardResolutionCacheTests: XCTestCase {
         XCTAssertEqual(candidates.first?.originalPostID, "first")
     }
 
+    /// Pinned webcast must survive newer timeline quotes that inherit the same broadcast URL
+    /// (see SpaceX cache: pinned flight-test link + later “Live webcast starts now” quote).
+    func testDuplicateXCardsNeverReplacePinnedCandidateWithNewerQuote() {
+        let discovery = BroadcastDiscovery()
+        let pinned = makeXBroadcastCandidate(
+            postID: "2080331023301161231",
+            broadcastID: "1AJEmmYdMDnJL",
+            publishedAt: checkedAt,
+            title: "Watch Starship's thirteenth flight test",
+            isPinned: true
+        )
+        let laterQuote = makeXBroadcastCandidate(
+            postID: "2080779149442957514",
+            broadcastID: "1AJEmmYdMDnJL",
+            publishedAt: checkedAt.addingTimeInterval(30 * 60 * 60),
+            title: "Live webcast of Starship's 13th flight test starts now",
+            isPinned: false
+        )
+
+        let candidates = discovery.deduplicatedXCandidates([pinned, laterQuote])
+
+        XCTAssertEqual(candidates.count, 1)
+        XCTAssertEqual(candidates.first?.originalPostID, "2080331023301161231")
+        XCTAssertTrue(candidates.first?.isPinned == true)
+        XCTAssertEqual(
+            candidates.first?.statusURL.absoluteString,
+            "https://x.com/i/broadcasts/1AJEmmYdMDnJL"
+        )
+    }
+
+    func testDuplicateXCardsPreferPinnedWhenItAppearsAfterUnpinnedDuplicate() {
+        let discovery = BroadcastDiscovery()
+        let unpinned = makeXBroadcastCandidate(
+            postID: "timeline-copy",
+            broadcastID: "1AJEmmYdMDnJL",
+            publishedAt: checkedAt.addingTimeInterval(60),
+            title: "Watch Starship's thirteenth flight test",
+            isPinned: false
+        )
+        let pinned = makeXBroadcastCandidate(
+            postID: "pinned",
+            broadcastID: "1AJEmmYdMDnJL",
+            publishedAt: checkedAt,
+            title: "Watch Starship's thirteenth flight test",
+            isPinned: true
+        )
+
+        let candidates = discovery.deduplicatedXCandidates([unpinned, pinned])
+
+        XCTAssertEqual(candidates.count, 1)
+        XCTAssertEqual(candidates.first?.originalPostID, "pinned")
+        XCTAssertTrue(candidates.first?.isPinned == true)
+    }
+
     func testSpaceXPlaybackPrefersMP4WithHLSFallback() {
         let mp4 = URL(string: "https://content.spacex.com/video.mp4")!
         let hls = URL(string: "https://content.spacex.com/video.m3u8")!
@@ -768,16 +822,23 @@ final class CardResolutionCacheTests: XCTestCase {
         )
     }
 
-    private func makeXBroadcastCandidate(postID: String, broadcastID: String, publishedAt: Date?) -> BroadcastCandidate {
+    private func makeXBroadcastCandidate(
+        postID: String,
+        broadcastID: String,
+        publishedAt: Date?,
+        title: String = "Launch of Falcon 9",
+        isPinned: Bool = false
+    ) -> BroadcastCandidate {
         BroadcastCandidate(
             statusURL: URL(string: "https://x.com/i/broadcasts/\(broadcastID)")!,
             dedupeKey: "broadcast:\(broadcastID)",
             streamURL: nil,
-            title: "Launch of Falcon 9",
-            subtitle: "X broadcast link",
-            tweetText: "Launch of Falcon 9 https://t.co/\(postID)",
+            title: title,
+            subtitle: isPinned ? "Pinned X broadcast link" : "X broadcast link",
+            tweetText: "\(title) https://t.co/\(postID)",
             publishedAt: publishedAt,
             allowsDeferredStreamResolution: true,
+            isPinned: isPinned,
             originalPostID: postID,
             contentFingerprint: postID
         )
