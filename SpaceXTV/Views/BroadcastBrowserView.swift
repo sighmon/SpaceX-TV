@@ -12,9 +12,7 @@ struct BroadcastBrowserView: View {
     @State private var isLoadingNextLaunch = false
     @State private var showsHomeFooter = false
     @State private var paranoidTapCount = 0
-    @State private var searchText = ""
-    @State private var searchFilter: CardSearchFilter = .all
-    @State private var isSearchPresented = false
+    @State private var cardFilter: CardFilter = .all
     @FocusState private var focusedHeaderControl: HeaderControl?
     @FocusState private var focusedID: Broadcast.ID?
     private let launchScheduleService = SpaceXLaunchScheduleService()
@@ -26,7 +24,7 @@ struct BroadcastBrowserView: View {
     private let headerControlHeight: CGFloat = 68
 #endif
 
-    private enum CardSearchFilter: String, CaseIterable, Identifiable, Hashable {
+    private enum CardFilter: String, CaseIterable, Identifiable, Hashable {
         case all
         case broadcasts
         case films
@@ -47,9 +45,7 @@ struct BroadcastBrowserView: View {
     }
 
     private enum HeaderControl: Hashable {
-        case search
-        case searchField
-        case searchFilter(CardSearchFilter)
+        case cardFilter(CardFilter)
         case settings
         case refresh
     }
@@ -73,40 +69,39 @@ struct BroadcastBrowserView: View {
         library.broadcasts
     }
 
-    private var normalizedSearchQuery: String {
-        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// When filter chips are hidden, always show every shelf.
+    private var activeCardFilter: CardFilter {
+        library.showsCardFilters ? cardFilter : .all
     }
 
-    private var isSearchActive: Bool {
-        !normalizedSearchQuery.isEmpty || searchFilter != .all
+    private var isFilterActive: Bool {
+        library.showsCardFilters && cardFilter != .all
     }
 
     private var xBroadcasts: [Broadcast] {
-        guard searchFilter == .all || searchFilter == .broadcasts else { return [] }
-        return visibleBroadcasts
-            .filter { $0.sourceKind == .xBroadcast && !$0.isStarshipFlightTest }
-            .filter(matchesSearch)
+        guard activeCardFilter == .all || activeCardFilter == .broadcasts else { return [] }
+        return visibleBroadcasts.filter {
+            $0.sourceKind == .xBroadcast && !$0.isStarshipFlightTest
+        }
     }
 
     private var starshipFilms: [Broadcast] {
-        guard searchFilter == .all || searchFilter == .films else { return [] }
-        return visibleBroadcasts
-            .filter { $0.sourceKind == .hls && $0.subtitle.hasPrefix("Starship film") }
-            .filter(matchesSearch)
+        guard activeCardFilter == .all || activeCardFilter == .films else { return [] }
+        return visibleBroadcasts.filter {
+            $0.sourceKind == .hls && $0.subtitle.hasPrefix("Starship film")
+        }
     }
 
     private var starshipTalks: [Broadcast] {
-        guard searchFilter == .all || searchFilter == .talks else { return [] }
-        return visibleBroadcasts
-            .filter { $0.sourceKind == .hls && $0.subtitle.hasPrefix("Starship talk") }
-            .filter(matchesSearch)
+        guard activeCardFilter == .all || activeCardFilter == .talks else { return [] }
+        return visibleBroadcasts.filter {
+            $0.sourceKind == .hls && $0.subtitle.hasPrefix("Starship talk")
+        }
     }
 
     private var starshipFlightTests: [Broadcast] {
-        guard searchFilter == .all || searchFilter == .flightTests else { return [] }
-        return visibleBroadcasts
-            .filter(\.isStarshipFlightTest)
-            .filter(matchesSearch)
+        guard activeCardFilter == .all || activeCardFilter == .flightTests else { return [] }
+        return visibleBroadcasts.filter(\.isStarshipFlightTest)
     }
 
     private var hasMatchingCards: Bool {
@@ -119,7 +114,7 @@ struct BroadcastBrowserView: View {
     /// Pagination only applies to the X broadcasts shelf (not films/talks/tests).
     private var showsBroadcastsLoadMore: Bool {
         library.canLoadMore
-            && (searchFilter == .all || searchFilter == .broadcasts)
+            && (activeCardFilter == .all || activeCardFilter == .broadcasts)
     }
 
     private var hasLoadedCards: Bool {
@@ -127,16 +122,11 @@ struct BroadcastBrowserView: View {
         return !visibleBroadcasts.isEmpty
     }
 
-    private func matchesSearch(_ broadcast: Broadcast) -> Bool {
-        let query = normalizedSearchQuery
-        guard !query.isEmpty else { return true }
-
-        let fields = [
-            broadcast.title,
-            broadcast.subtitle,
-            broadcast.tweetText ?? ""
-        ]
-        return fields.contains { $0.localizedCaseInsensitiveContains(query) }
+    private var firstVisibleCardID: Broadcast.ID? {
+        xBroadcasts.first?.id
+            ?? starshipFilms.first?.id
+            ?? starshipFlightTests.first?.id
+            ?? starshipTalks.first?.id
     }
 
     var body: some View {
@@ -161,25 +151,23 @@ struct BroadcastBrowserView: View {
                             .padding(.bottom, headerBottomSpacing(for: screenWidth))
                             .zIndex(1)
 
-                        if isSearchPresented {
-                            searchPanel(width: contentWidth)
+                        countdown(width: contentWidth)
+                            .padding(
+                                .bottom,
+                                // Match the tighter filters→cards gap when chips are shown;
+                                // otherwise keep the original countdown→cards spacing.
+                                library.showsCardFilters
+                                    ? headerBottomSpacing(for: screenWidth)
+                                    : verticalSpacing(for: screenWidth)
+                            )
+                            .zIndex(0)
+
+                        if library.showsCardFilters {
+                            filterBar(width: contentWidth)
                                 .padding(.bottom, headerBottomSpacing(for: screenWidth))
                                 .zIndex(1)
-                                .transition(.opacity.combined(with: .move(edge: .top)))
-                                .onAppear {
-                                    // Defer so the field is in the hierarchy before focus moves.
-                                    DispatchQueue.main.async {
-                                        focusedHeaderControl = .searchField
-                                    }
-                                }
                         }
 
-                        if !isSearchPresented {
-                            countdown(width: contentWidth)
-                                .padding(.bottom, verticalSpacing(for: screenWidth))
-                                .zIndex(0)
-                                .transition(.opacity)
-                        }
                         content(width: contentWidth)
                             .zIndex(0)
                         if hasLoadedCards || showsHomeFooter {
@@ -266,26 +254,6 @@ struct BroadcastBrowserView: View {
             Spacer(minLength: 32)
 
             HStack(spacing: 14) {
-                headerButton(
-                    systemImage: isSearchPresented ? "magnifyingglass.circle.fill" : "magnifyingglass",
-                    control: .search
-                ) {
-                    if isSearchPresented {
-                        clearSearchQuery()
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            isSearchPresented = false
-                        }
-                        // Restore focus to the search control after the panel leaves the hierarchy.
-                        DispatchQueue.main.async {
-                            focusedHeaderControl = .search
-                        }
-                    } else {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            isSearchPresented = true
-                        }
-                    }
-                }
-
                 headerButton(systemImage: "gear", control: .settings) {
                     showsSettings = true
                 }
@@ -300,63 +268,24 @@ struct BroadcastBrowserView: View {
         }
     }
 
-    private func searchPanel(width: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 14) {
-                Image(systemName: "magnifyingglass")
-#if os(tvOS)
-                    .font(.system(size: 28, weight: .semibold))
-#else
-                    .font(.system(size: 20, weight: .semibold))
-#endif
-                    .foregroundStyle(.white.opacity(0.72))
-
-                TextField("Search broadcasts, films, tests, talks", text: $searchText)
-#if os(tvOS)
-                    .font(.title3)
-#else
-                    .font(.body)
-#endif
-                    .textFieldStyle(.plain)
-                    .foregroundStyle(.white)
-                    .focused($focusedHeaderControl, equals: .searchField)
-                    .submitLabel(.search)
-                    .autocorrectionDisabled()
-#if !os(tvOS)
-                    .textInputAutocapitalization(.never)
-#endif
-
-                if !normalizedSearchQuery.isEmpty {
-                    Button {
-                        searchText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.white.opacity(0.55))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Clear search text")
-                }
-            }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 14)
-            .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
-
-            HStack(spacing: 12) {
-                ForEach(CardSearchFilter.allCases) { filter in
-                    searchFilterChip(filter)
-                }
+    private func filterBar(width: CGFloat) -> some View {
+        HStack(spacing: 14) {
+            ForEach(CardFilter.allCases) { filter in
+                filterChip(filter)
             }
         }
         .frame(width: width, alignment: .leading)
         .accessibilityElement(children: .contain)
     }
 
-    private func searchFilterChip(_ filter: CardSearchFilter) -> some View {
-        let isSelected = searchFilter == filter
-        let isFocused = focusedHeaderControl == .searchFilter(filter)
+    private func filterChip(_ filter: CardFilter) -> some View {
+        let isSelected = cardFilter == filter
+        let isFocused = focusedHeaderControl == .cardFilter(filter)
+        // Focused chips use the same solid light fill as selected ones, so text stays dark.
+        let isHighlighted = isSelected || isFocused
 
         return Button {
-            searchFilter = filter
+            cardFilter = filter
         } label: {
             Text(filter.title)
 #if os(tvOS)
@@ -364,51 +293,70 @@ struct BroadcastBrowserView: View {
 #else
                 .font(.subheadline.weight(.semibold))
 #endif
-                .foregroundStyle(chipForeground(isSelected: isSelected, isFocused: isFocused))
+                .foregroundStyle(isHighlighted ? Color.black : Color.white.opacity(0.86))
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
                 .background(
                     chipBackground(isSelected: isSelected, isFocused: isFocused),
                     in: Capsule()
                 )
-                .overlay {
-                    // Color-only focus cue (no scale) so selected chips remain visible under focus.
-                    if isFocused {
-                        Capsule()
-                            .strokeBorder(
-                                isSelected ? Color.black.opacity(0.38) : Color.white.opacity(0.55),
-                                lineWidth: 2
-                            )
-                    }
-                }
         }
-        .buttonStyle(.plain)
+        // Custom style + disabled system focus plate so chips never scale/overlap on tvOS.
+        .buttonStyle(FilterChipButtonStyle())
+        .focused($focusedHeaderControl, equals: .cardFilter(filter))
         .focusEffectDisabled()
-        .focused($focusedHeaderControl, equals: .searchFilter(filter))
+#if os(tvOS)
+        // onMoveCommand replaces system focus movement for every direction, so left/right/down
+        // must be handled here too. Only Up is special-cased (header is top-trailing).
+        .onMoveCommand { direction in
+            handleFilterMoveCommand(direction, from: filter)
+        }
+#endif
         .animation(.easeOut(duration: 0.16), value: isSelected)
         .animation(.easeOut(duration: 0.16), value: isFocused)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    private func chipForeground(isSelected: Bool, isFocused: Bool) -> Color {
-        if isSelected {
-            return .black
-        }
-        return isFocused ? .white : .white.opacity(0.86)
-    }
-
     private func chipBackground(isSelected: Bool, isFocused: Bool) -> Color {
-        if isSelected {
-            // Slightly dim when unfocused so selected+focused still reads as a focus change.
-            return isFocused ? .white : .white.opacity(0.88)
+        if isFocused {
+            return .white
         }
-        return isFocused ? .white.opacity(0.22) : .white.opacity(0.12)
+        if isSelected {
+            // Mid gray between unselected (0.12) and focus white.
+            return .white.opacity(0.42)
+        }
+        return .white.opacity(0.12)
     }
 
-    private func clearSearchQuery() {
-        searchText = ""
-        searchFilter = .all
+#if os(tvOS)
+    private func handleFilterMoveCommand(_ direction: MoveCommandDirection, from filter: CardFilter) {
+        switch direction {
+        case .up:
+            focusedHeaderControl = .settings
+        case .left:
+            if let previous = adjacentFilter(filter, offset: -1) {
+                focusedHeaderControl = .cardFilter(previous)
+            }
+        case .right:
+            if let next = adjacentFilter(filter, offset: 1) {
+                focusedHeaderControl = .cardFilter(next)
+            }
+        case .down:
+            // Destination only — avoid clearing header focus first (can flash another target).
+            focusedID = firstVisibleCardID
+        default:
+            break
+        }
     }
+
+    private func adjacentFilter(_ filter: CardFilter, offset: Int) -> CardFilter? {
+        let all = CardFilter.allCases
+        guard let index = all.firstIndex(of: filter) else { return nil }
+        let nextIndex = all.index(index, offsetBy: offset)
+        guard all.indices.contains(nextIndex) else { return nil }
+        return all[nextIndex]
+    }
+#endif
 
     private func headerButton(systemImage: String, control: HeaderControl, action: @escaping () -> Void) -> some View {
         let isFocused = focusedHeaderControl == control
@@ -560,17 +508,16 @@ struct BroadcastBrowserView: View {
         return Grid(alignment: .leading, horizontalSpacing: spacing, verticalSpacing: spacing) {
             if !hasMatchingCards {
                 GridRow {
-                    searchEmptyState(width: width)
+                    filterEmptyState(width: width)
                         .gridCellColumns(columnCount)
                 }
-                .id("search-empty")
+                .id("filter-empty")
             }
 
             if !xBroadcasts.isEmpty {
                 broadcastRows(xBroadcasts, columnCount: columnCount, cardWidth: cardWidth)
             }
 
-            // Keep Load More available during text search so newly fetched posts can match the query.
             if showsBroadcastsLoadMore {
                 GridRow {
                     loadMoreButton(width: width)
@@ -609,25 +556,23 @@ struct BroadcastBrowserView: View {
         .frame(width: width, alignment: .leading)
     }
 
-    private func searchEmptyState(width: CGFloat) -> some View {
+    private func filterEmptyState(width: CGFloat) -> some View {
         let detail: String
-        if !normalizedSearchQuery.isEmpty {
-            detail = "No cards match “\(normalizedSearchQuery)”"
-        } else if searchFilter != .all {
-            detail = "No \(searchFilter.title.lowercased()) available"
+        if isFilterActive {
+            detail = "No \(cardFilter.title.lowercased()) available"
         } else {
             detail = "No broadcasts available"
         }
 
         return VStack(alignment: .leading, spacing: 12) {
-            Label(isSearchActive ? "No matches" : "Nothing here yet", systemImage: "magnifyingglass")
+            Label(isFilterActive ? "No matches" : "Nothing here yet", systemImage: "line.3.horizontal.decrease.circle")
                 .font(.title2.weight(.semibold))
             Text(detail)
                 .font(.body)
                 .foregroundStyle(.secondary)
-            if isSearchActive {
-                Button("Clear Search") {
-                    clearSearchQuery()
+            if isFilterActive {
+                Button("Show All") {
+                    cardFilter = .all
                 }
                 .buttonStyle(.bordered)
             }
@@ -1362,6 +1307,15 @@ private final class ThumbnailImageLoader: ObservableObject {
 
         nextComponents.queryItems = queryItems
         return nextComponents.url
+    }
+}
+
+/// Draws the label only — no system chrome or hover/focus scale that can overlap neighbors on tvOS.
+private struct FilterChipButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .contentShape(Capsule())
+            .opacity(configuration.isPressed ? 0.88 : 1)
     }
 }
 
