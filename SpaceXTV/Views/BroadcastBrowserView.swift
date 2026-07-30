@@ -128,27 +128,6 @@ struct BroadcastBrowserView: View {
         return !visibleBroadcasts.isEmpty
     }
 
-    private var firstVisibleCardID: Broadcast.ID? {
-        xBroadcasts.first?.id
-            ?? starshipFilms.first?.id
-            ?? starshipFlightTests.first?.id
-            ?? starshipTalks.first?.id
-    }
-
-    /// First focusable content target below the filter chips when Down is pressed on tvOS.
-    private var firstContentFocusTarget: HeaderControl? {
-        if firstVisibleCardID != nil {
-            return nil // cards use focusedID instead
-        }
-        if isFilterActive {
-            return .showAll
-        }
-        if showsBroadcastsLoadMore {
-            return .loadMore
-        }
-        return nil
-    }
-
     var body: some View {
         ZStack {
             LinearGradient(
@@ -345,13 +324,6 @@ struct BroadcastBrowserView: View {
         .buttonStyle(FilterChipButtonStyle())
         .focused($focusedHeaderControl, equals: .cardFilter(filter))
         .focusEffectDisabled()
-#if os(tvOS)
-        // onMoveCommand replaces system focus movement for every direction, so left/right/down
-        // must be handled here too. Only Up is special-cased (header is top-trailing).
-        .onMoveCommand { direction in
-            handleFilterMoveCommand(direction, from: filter)
-        }
-#endif
         .animation(.easeOut(duration: 0.16), value: isSelected)
         .animation(.easeOut(duration: 0.16), value: isFocused)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -367,40 +339,6 @@ struct BroadcastBrowserView: View {
         }
         return .white.opacity(0.12)
     }
-
-#if os(tvOS)
-    private func handleFilterMoveCommand(_ direction: MoveCommandDirection, from filter: CardFilter) {
-        switch direction {
-        case .up:
-            focusedHeaderControl = .settings
-        case .left:
-            if let previous = adjacentFilter(filter, offset: -1) {
-                focusedHeaderControl = .cardFilter(previous)
-            }
-        case .right:
-            if let next = adjacentFilter(filter, offset: 1) {
-                focusedHeaderControl = .cardFilter(next)
-            }
-        case .down:
-            // Prefer a card; if the shelf is empty, land on Show All or Load More.
-            if let cardID = firstVisibleCardID {
-                focusedID = cardID
-            } else if let target = firstContentFocusTarget {
-                focusedHeaderControl = target
-            }
-        default:
-            break
-        }
-    }
-
-    private func adjacentFilter(_ filter: CardFilter, offset: Int) -> CardFilter? {
-        let all = CardFilter.allCases
-        guard let index = all.firstIndex(of: filter) else { return nil }
-        let nextIndex = all.index(index, offsetBy: offset)
-        guard all.indices.contains(nextIndex) else { return nil }
-        return all[nextIndex]
-    }
-#endif
 
     private func headerButton(systemImage: String, control: HeaderControl, action: @escaping () -> Void) -> some View {
         let isFocused = focusedHeaderControl == control
