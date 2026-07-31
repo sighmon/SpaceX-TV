@@ -12,6 +12,7 @@ struct BroadcastBrowserView: View {
     @State private var isLoadingNextLaunch = false
     @State private var showsHomeFooter = false
     @State private var paranoidTapCount = 0
+    @State private var cardFilter: CardFilter = .all
     @FocusState private var focusedHeaderControl: HeaderControl?
     @FocusState private var focusedID: Broadcast.ID?
     private let launchScheduleService = SpaceXLaunchScheduleService()
@@ -23,9 +24,36 @@ struct BroadcastBrowserView: View {
     private let headerControlHeight: CGFloat = 68
 #endif
 
+    private enum CardFilter: String, CaseIterable, Identifiable, Hashable {
+        case all
+        case broadcasts
+        case films
+        case flightTests
+        case talks
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .all: return "All"
+            case .broadcasts: return "Broadcasts"
+            case .films: return "Films"
+            case .flightTests: return "Flight Tests"
+            case .talks: return "Talks"
+            }
+        }
+    }
+
     private enum HeaderControl: Hashable {
+        case cardFilter(CardFilter)
         case settings
         case refresh
+        case showAll
+        case loadMore
+    }
+
+    private enum HomeScrollAnchor {
+        static let top = "home-top"
     }
 
     init(
@@ -47,28 +75,52 @@ struct BroadcastBrowserView: View {
         library.broadcasts
     }
 
+    /// When filter chips are hidden, always show every shelf.
+    private var activeCardFilter: CardFilter {
+        library.showsCardFilters ? cardFilter : .all
+    }
+
+    private var isFilterActive: Bool {
+        library.showsCardFilters && cardFilter != .all
+    }
+
     private var xBroadcasts: [Broadcast] {
-        visibleBroadcasts.filter {
+        guard activeCardFilter == .all || activeCardFilter == .broadcasts else { return [] }
+        return visibleBroadcasts.filter {
             $0.sourceKind == .xBroadcast && !$0.isStarshipFlightTest
         }
     }
 
     private var starshipFilms: [Broadcast] {
-        visibleBroadcasts.filter {
+        guard activeCardFilter == .all || activeCardFilter == .films else { return [] }
+        return visibleBroadcasts.filter {
             $0.sourceKind == .hls && $0.subtitle.hasPrefix("Starship film")
         }
     }
 
     private var starshipTalks: [Broadcast] {
-        visibleBroadcasts.filter {
+        guard activeCardFilter == .all || activeCardFilter == .talks else { return [] }
+        return visibleBroadcasts.filter {
             $0.sourceKind == .hls && $0.subtitle.hasPrefix("Starship talk")
         }
     }
 
     private var starshipFlightTests: [Broadcast] {
-        visibleBroadcasts.filter {
-            $0.isStarshipFlightTest
-        }
+        guard activeCardFilter == .all || activeCardFilter == .flightTests else { return [] }
+        return visibleBroadcasts.filter(\.isStarshipFlightTest)
+    }
+
+    private var hasMatchingCards: Bool {
+        !xBroadcasts.isEmpty
+            || !starshipFilms.isEmpty
+            || !starshipFlightTests.isEmpty
+            || !starshipTalks.isEmpty
+    }
+
+    /// Pagination only applies to the X broadcasts shelf (not films/talks/tests).
+    private var showsBroadcastsLoadMore: Bool {
+        library.canLoadMore
+            && (activeCardFilter == .all || activeCardFilter == .broadcasts)
     }
 
     private var hasLoadedCards: Bool {
@@ -90,31 +142,53 @@ struct BroadcastBrowserView: View {
                 let horizontalPadding = horizontalPadding(for: screenWidth)
                 let contentWidth = max(0, screenWidth - (horizontalPadding * 2))
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        header(width: contentWidth)
-                            .frame(width: contentWidth, alignment: .leading)
-                            .frame(minHeight: headerContentHeight(for: screenWidth), alignment: .leading)
-                            .padding(.bottom, headerBottomSpacing(for: screenWidth))
-                            .zIndex(1)
+                ScrollViewReader { scrollProxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            header(width: contentWidth)
+                                .frame(width: contentWidth, alignment: .leading)
+                                .frame(minHeight: headerContentHeight(for: screenWidth), alignment: .leading)
+                                .padding(.bottom, headerBottomSpacing(for: screenWidth))
+                                .zIndex(1)
+                                .id(HomeScrollAnchor.top)
 
-                        countdown(width: contentWidth)
-                            .padding(.bottom, verticalSpacing(for: screenWidth))
-                            .zIndex(0)
-                        content(width: contentWidth)
-                            .zIndex(0)
-                        if hasLoadedCards || showsHomeFooter {
-                            homeFooter(width: contentWidth)
-                                .opacity(showsHomeFooter ? 1 : 0)
-                                .padding(.top, footerTopSpacing(for: screenWidth))
+                            countdown(width: contentWidth)
+                                .padding(
+                                    .bottom,
+                                    // Match the tighter filters→cards gap when chips are shown;
+                                    // otherwise keep the original countdown→cards spacing.
+                                    library.showsCardFilters
+                                        ? headerBottomSpacing(for: screenWidth)
+                                        : verticalSpacing(for: screenWidth)
+                                )
                                 .zIndex(0)
+
+                            if library.showsCardFilters {
+                                filterBar(width: contentWidth)
+                                    .padding(.bottom, headerBottomSpacing(for: screenWidth))
+                                    .zIndex(1)
+                            }
+
+                            content(width: contentWidth)
+                                .zIndex(0)
+                            if hasLoadedCards || showsHomeFooter {
+                                homeFooter(width: contentWidth)
+                                    .opacity(showsHomeFooter ? 1 : 0)
+                                    .padding(.top, footerTopSpacing(for: screenWidth))
+                                    .zIndex(0)
+                            }
+                        }
+                        .frame(width: contentWidth, alignment: .leading)
+                        .padding(.horizontal, horizontalPadding)
+                        .padding(.vertical, verticalPadding(for: screenWidth))
+                    }
+                    .frame(width: screenWidth)
+                    .onChange(of: cardFilter) { _, _ in
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            scrollProxy.scrollTo(HomeScrollAnchor.top, anchor: .top)
                         }
                     }
-                        .frame(width: contentWidth, alignment: .leading)
-                    .padding(.horizontal, horizontalPadding)
-                    .padding(.vertical, verticalPadding(for: screenWidth))
                 }
-                .frame(width: screenWidth)
             }
             .ignoresSafeArea(edges: .bottom)
         }
@@ -199,6 +273,71 @@ struct BroadcastBrowserView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func filterBar(width: CGFloat) -> some View {
+        let chips = HStack(spacing: 14) {
+            ForEach(CardFilter.allCases) { filter in
+                filterChip(filter)
+            }
+        }
+        .accessibilityElement(children: .contain)
+
+        // Compact widths cannot fit five labels; allow horizontal scrolling there.
+        // tvOS / regular widths keep a simple full-width row.
+        if horizontalSizeClass == .compact {
+            ScrollView(.horizontal, showsIndicators: false) {
+                chips
+            }
+            .frame(width: width, alignment: .leading)
+        } else {
+            chips
+                .frame(width: width, alignment: .leading)
+        }
+    }
+
+    private func filterChip(_ filter: CardFilter) -> some View {
+        let isSelected = cardFilter == filter
+        let isFocused = focusedHeaderControl == .cardFilter(filter)
+        // Focused = solid white fill; selected-only = mid gray. Dark text for either highlight.
+        let isHighlighted = isSelected || isFocused
+
+        return Button {
+            cardFilter = filter
+        } label: {
+            Text(filter.title)
+#if os(tvOS)
+                .font(.callout.weight(.semibold))
+#else
+                .font(.subheadline.weight(.semibold))
+#endif
+                .foregroundStyle(isHighlighted ? Color.black : Color.white.opacity(0.86))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(
+                    chipBackground(isSelected: isSelected, isFocused: isFocused),
+                    in: Capsule()
+                )
+        }
+        // Custom style + disabled system focus plate so chips never scale/overlap on tvOS.
+        .buttonStyle(FilterChipButtonStyle())
+        .focused($focusedHeaderControl, equals: .cardFilter(filter))
+        .focusEffectDisabled()
+        .animation(.easeOut(duration: 0.16), value: isSelected)
+        .animation(.easeOut(duration: 0.16), value: isFocused)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private func chipBackground(isSelected: Bool, isFocused: Bool) -> Color {
+        if isFocused {
+            return .white
+        }
+        if isSelected {
+            // Mid gray between unselected (0.12) and focus white.
+            return .white.opacity(0.42)
+        }
+        return .white.opacity(0.12)
     }
 
     private func headerButton(systemImage: String, control: HeaderControl, action: @escaping () -> Void) -> some View {
@@ -349,16 +488,24 @@ struct BroadcastBrowserView: View {
         let cardWidth = (width - (spacing * CGFloat(columnCount - 1))) / CGFloat(columnCount)
 
         return Grid(alignment: .leading, horizontalSpacing: spacing, verticalSpacing: spacing) {
+            if !hasMatchingCards {
+                GridRow {
+                    filterEmptyState(width: width)
+                        .gridCellColumns(columnCount)
+                }
+                .id("filter-empty")
+            }
+
             if !xBroadcasts.isEmpty {
                 broadcastRows(xBroadcasts, columnCount: columnCount, cardWidth: cardWidth)
+            }
 
-                if library.canLoadMore {
-                    GridRow {
-                        loadMoreButton(width: width)
-                            .gridCellColumns(columnCount)
-                    }
-                    .id("load-more")
+            if showsBroadcastsLoadMore {
+                GridRow {
+                    loadMoreButton(width: width)
+                        .gridCellColumns(columnCount)
                 }
+                .id("load-more")
             }
 
             if !starshipFilms.isEmpty {
@@ -389,6 +536,37 @@ struct BroadcastBrowserView: View {
             }
         }
         .frame(width: width, alignment: .leading)
+    }
+
+    private func filterEmptyState(width: CGFloat) -> some View {
+        let detail: String
+        if isFilterActive && showsBroadcastsLoadMore {
+            detail = "No \(cardFilter.title.lowercased()) loaded yet. Load more posts, or show all shelves."
+        } else if isFilterActive {
+            detail = "No \(cardFilter.title.lowercased()) available"
+        } else if showsBroadcastsLoadMore {
+            detail = "No broadcasts loaded yet. Try loading more posts."
+        } else {
+            detail = "No broadcasts available"
+        }
+
+        return VStack(alignment: .leading, spacing: 12) {
+            Label(isFilterActive ? "No matches" : "Nothing here yet", systemImage: "line.3.horizontal.decrease.circle")
+                .font(.title2.weight(.semibold))
+            Text(detail)
+                .font(.body)
+                .foregroundStyle(.secondary)
+            if isFilterActive {
+                Button("Show All") {
+                    cardFilter = .all
+                }
+                .buttonStyle(.bordered)
+                .focused($focusedHeaderControl, equals: .showAll)
+            }
+        }
+        .padding(28)
+        .frame(width: width, alignment: .leading)
+        .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
     }
 
     @ViewBuilder
@@ -449,6 +627,7 @@ struct BroadcastBrowserView: View {
             .frame(minHeight: 86)
         }
         .buttonStyle(.bordered)
+        .focused($focusedHeaderControl, equals: .loadMore)
         .disabled(library.isLoadingMore)
     }
 
@@ -1116,6 +1295,15 @@ private final class ThumbnailImageLoader: ObservableObject {
 
         nextComponents.queryItems = queryItems
         return nextComponents.url
+    }
+}
+
+/// Draws the label only — no system chrome or hover/focus scale that can overlap neighbors on tvOS.
+private struct FilterChipButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .contentShape(Capsule())
+            .opacity(configuration.isPressed ? 0.88 : 1)
     }
 }
 

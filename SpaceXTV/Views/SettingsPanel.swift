@@ -82,6 +82,9 @@ struct SettingsView: View {
                     Toggle("Show next launch countdown", isOn: $library.showsNextLaunchCountdown)
                         .font(.body.weight(.medium))
 
+                    Toggle("Show card filters", isOn: $library.showsCardFilters)
+                        .font(.body.weight(.medium))
+
                     Toggle("Prefer MP4 playback", isOn: $library.prefersMP4Playback)
                         .font(.body.weight(.medium))
                         .onChange(of: library.prefersMP4Playback) {
