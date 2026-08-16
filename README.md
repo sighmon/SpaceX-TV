@@ -88,7 +88,7 @@ WebHost cron commands that use `setlock` should redirect after the `setlock` com
 @daily /usr/bin/setlock -n /tmp/cronlock.YOUR_LOCK_ID /home/YOUR_WEBHOST_USER/scripts/run_spacex_cache_update.sh >> /home/YOUR_WEBHOST_USER/spacex-tv-x-cache.log 2>&1
 ```
 
-To refresh the cache near launch time, add a second cron job that runs every five minutes. It checks the same SpaceX launch timing feeds used by the app countdown, and only runs the X cache updater when the next launch is within 10 minutes and the existing JSON cache does not already contain an `x.com/i/broadcasts/...` link. Use the same lock path as the daily updater so the two jobs cannot write the cache at the same time:
+To refresh the cache near launch time, add a second cron job that runs every five minutes. It checks the same SpaceX launch timing feeds used by the app countdown and runs the X cache updater whenever the next launch is within 10 minutes. Re-fetching on each cron tick also handles multiple launches close together and cards published after the first check. Use the same lock path as the daily updater so the two jobs cannot write the cache at the same time:
 
 ```cron
 */5 * * * * /usr/bin/setlock -n /tmp/cronlock.YOUR_LOCK_ID /home/YOUR_WEBHOST_USER/scripts/run_spacex_launch_cache_check.sh >> /home/YOUR_WEBHOST_USER/spacex-tv-x-cache.log 2>&1

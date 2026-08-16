@@ -6,15 +6,11 @@ require "rbconfig"
 require "time"
 require "uri"
 
-CACHE_PATH = File.expand_path(
-  ENV.fetch("SPACEX_TV_X_CACHE_PATH", "~/www.sighmon.com/spacex-tv/x-cache.json")
-)
 UPDATE_SCRIPT = File.expand_path(
   ENV.fetch("SPACEX_TV_X_UPDATE_SCRIPT", File.join(__dir__, "update_spacex_x_cache.rb"))
 )
 RUBY = ENV.fetch("SPACEX_TV_RUBY", RbConfig.ruby)
 THRESHOLD_SECONDS = Integer(ENV.fetch("SPACEX_TV_LAUNCH_CHECK_THRESHOLD_SECONDS", "600"))
-BROADCAST_LOOKBACK_SECONDS = Integer(ENV.fetch("SPACEX_TV_LAUNCH_BROADCAST_LOOKBACK_SECONDS", "21600"))
 TILES_URL = ENV.fetch(
   "SPACEX_TV_LAUNCH_TILES_URL",
   "https://content.spacex.com/api/spacex-website/launches-page-tiles/upcoming"
@@ -79,44 +75,6 @@ def next_launch(tiles, timings, now)
   launches.select { |launch| launch[:time] >= now }.min_by { |launch| launch[:time] }
 end
 
-def broadcast_link_string?(value)
-  value.is_a?(String) && value.match?(%r{https?://(?:[^/\s]+\.)?(?:x|twitter)\.com/i/broadcasts/}i)
-end
-
-def contains_broadcast_link?(value)
-  case value
-  when Hash
-    value.any? { |_, nested| contains_broadcast_link?(nested) }
-  when Array
-    value.any? { |nested| contains_broadcast_link?(nested) }
-  else
-    broadcast_link_string?(value)
-  end
-end
-
-def cache_posts(cache)
-  [
-    cache.dig("pinned", "data"),
-    cache.dig("timeline", "data")
-  ].compact.flatten
-end
-
-def cache_has_launch_broadcast_link?(path, launch_time)
-  return false unless File.file?(path)
-
-  earliest_broadcast_time = launch_time - BROADCAST_LOOKBACK_SECONDS
-
-  cache_posts(JSON.parse(File.read(path))).any? do |post|
-    created_at = Time.parse(post["created_at"].to_s)
-    created_at >= earliest_broadcast_time && created_at <= launch_time && contains_broadcast_link?(post)
-  rescue ArgumentError
-    false
-  end
-rescue JSON::ParserError => error
-  log "Could not read existing X cache JSON: #{error.message}"
-  false
-end
-
 def run_update_script
   raise "Update script not found: #{UPDATE_SCRIPT}" unless File.file?(UPDATE_SCRIPT)
 
@@ -151,12 +109,7 @@ begin
     exit
   end
 
-  if cache_has_launch_broadcast_link?(CACHE_PATH, launch[:time])
-    log "Existing X cache already contains a launch-window broadcast link; skipping cache update"
-    exit
-  end
-
-  log "Launch is inside #{THRESHOLD_SECONDS}s window and cache has no launch-window broadcast link"
+  log "Launch is inside #{THRESHOLD_SECONDS}s window"
   run_update_script
 rescue StandardError => error
   log "Failed SpaceX launch cache check: #{error.class}: #{error.message}"

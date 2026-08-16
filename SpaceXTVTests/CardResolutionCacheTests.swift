@@ -752,7 +752,7 @@ final class CardResolutionCacheTests: XCTestCase {
     }
 
     @MainActor
-    func testNeedsNearLaunchRefreshSkipsWhenLiveCardPresent() {
+    func testNeedsNearLaunchRefreshAllowsAnotherLaunchWhenLiveCardPresent() {
         let live = Broadcast(
             title: "Launch",
             subtitle: "Live broadcast",
@@ -764,7 +764,7 @@ final class CardResolutionCacheTests: XCTestCase {
         let library = BroadcastLibrary(previewBroadcasts: [live])
         let now = Date(timeIntervalSince1970: 1_800_000_000)
 
-        XCTAssertFalse(
+        XCTAssertTrue(
             library.needsNearLaunchRefresh(
                 launchDate: now.addingTimeInterval(3 * 60),
                 now: now

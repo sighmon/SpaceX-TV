@@ -66,13 +66,14 @@ final class BroadcastLibrary: ObservableObject {
     private let maximumRequestedLimit = 20
     private let cacheVersion = 28
     private let cardCacheVersion = 4
-    /// When the next launch is this close and no LIVE card is present, auto-refresh in the background.
+    /// When the next launch is this close, auto-refresh once for that launch in the background.
     static let nearLaunchRefreshWindow: TimeInterval = 5 * 60
     private let xAPICacheURL = URL(string: "https://www.sighmon.com/spacex-tv/x-cache.json")!
     private var cachedBroadcasts: [Broadcast] = []
     private var requestedLimit = 0
     private var cardResolutionCache = CardResolutionCache()
     private var isRefreshingInBackground = false
+    private var lastNearLaunchRefreshDate: Date?
     /// Bumped when a foreground discovery starts so older background results never apply.
     private var discoveryGeneration = 0
 
@@ -192,16 +193,16 @@ final class BroadcastLibrary: ObservableObject {
         }
     }
 
-    /// True when launch is in the next 5 minutes and the current list has no LIVE card.
+    /// True when launch is in the next 5 minutes and has not already triggered a refresh.
     func needsNearLaunchRefresh(launchDate: Date, now: Date = Date()) -> Bool {
         let remaining = launchDate.timeIntervalSince(now)
         guard remaining > 0, remaining <= Self.nearLaunchRefreshWindow else {
             return false
         }
-        return !hasLiveBroadcast
+        return lastNearLaunchRefreshDate != launchDate
     }
 
-    /// Re-fetch broadcasts without clearing the grid (used at T−5 when cache has no LIVE card).
+    /// Re-fetch broadcasts without clearing the grid when each launch reaches T−5.
     func refreshInBackgroundNearLaunch(launchDate: Date, now: Date = Date()) async {
         guard needsNearLaunchRefresh(launchDate: launchDate, now: now) else { return }
         guard case .loaded = loadingState else { return }
@@ -209,11 +210,12 @@ final class BroadcastLibrary: ObservableObject {
 
         let generation = discoveryGeneration
         let limit = max(requestedLimit, pageSize)
+        lastNearLaunchRefreshDate = launchDate
         isRefreshingInBackground = true
         defer { isRefreshingInBackground = false }
 
         let remainingSeconds = max(0, Int(launchDate.timeIntervalSince(now)))
-        let reason = "Near-launch background refresh (T−\(remainingSeconds)s, no LIVE card)"
+        let reason = "Near-launch background refresh (T−\(remainingSeconds)s)"
         debugLines = [reason] + debugLines
         print("[SpaceXTV] \(reason)")
 
@@ -227,12 +229,15 @@ final class BroadcastLibrary: ObservableObject {
             guard case .loaded = loadingState, !isLoadingMore else { return }
             applySuccessfulDiscovery(result, requestedLimit: limit)
             if hasLiveBroadcast {
-                debugLines = ["Near-launch refresh found a LIVE card"] + result.report.lines
+                debugLines = ["Near-launch refresh completed with LIVE cards"] + result.report.lines
             } else {
-                debugLines = ["Near-launch refresh completed; still no LIVE card"] + result.report.lines
+                debugLines = ["Near-launch refresh completed without LIVE cards"] + result.report.lines
             }
         } catch {
             guard generation == discoveryGeneration else { return }
+            if lastNearLaunchRefreshDate == launchDate {
+                lastNearLaunchRefreshDate = nil
+            }
             let message: String
             if let failure = error as? BroadcastDiscoveryFailure {
                 message = failure.errorDescription ?? failure.localizedDescription
