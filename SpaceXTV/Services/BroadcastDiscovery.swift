@@ -2081,7 +2081,7 @@ struct SpaceXWebcast: Decodable {
 
     var sourceKind: Broadcast.SourceKind? {
         switch streamingVideoType?.lowercased() {
-        case "x.com":
+        case "x.com", "x-live-studio":
             .xBroadcast
         case "youtube":
             .youtube

@@ -548,6 +548,17 @@ final class CardResolutionCacheTests: XCTestCase {
         XCTAssertEqual(webcast.url?.absoluteString, "https://x.com/i/broadcasts/1YpK2V5M6Q")
     }
 
+    func testSpaceXXLiveStudioWebcastCreatesBroadcastFallbackURL() {
+        // Upcoming flight-test missions use this type before the archived CMS video is published.
+        let webcast = SpaceXWebcast(
+            videoId: "1AJEmmYdMDnJL",
+            streamingVideoType: "x-live-studio"
+        )
+
+        XCTAssertEqual(webcast.sourceKind, .xBroadcast)
+        XCTAssertEqual(webcast.url?.absoluteString, "https://x.com/i/broadcasts/1AJEmmYdMDnJL")
+    }
+
     func testEmptySpaceXWebcastHasNoPlayableURL() {
         // Holding mission records (e.g. starship-flight-13) ship with empty webcasts[].
         let webcast = SpaceXWebcast(videoId: nil, streamingVideoType: nil)
