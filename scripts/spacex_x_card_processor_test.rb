@@ -36,6 +36,24 @@ class SpaceXXCardProcessorTest < Minitest::Test
     assert_equal false, entries.fetch("post:plain").fetch("hasUsableContent")
   end
 
+  class UnexpectedPageProbeProcessor < StubProcessor
+    private
+
+    def stream_from_page(_url)
+      raise "plain posts must not scan reply media from the rendered page"
+    end
+  end
+
+  def test_plain_post_does_not_probe_rendered_page_for_reply_video
+    value = response
+    value["data"] = value.fetch("data").select { |post| post.fetch("id") == "plain" }
+
+    entry = UnexpectedPageProbeProcessor.new(now: NOW).process(value).dig("entries", "post:plain")
+
+    refute entry.fetch("hasUsableContent")
+    assert_nil entry.fetch("streamURL")
+  end
+
   class NotStartedStubProcessor < SpaceXXCardProcessor
     private
 

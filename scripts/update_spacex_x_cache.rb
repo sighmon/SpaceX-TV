@@ -109,7 +109,7 @@ begin
 
   payload = {
     generated_at: Time.now.utc.iso8601,
-    source: "x-api-and-spacex-cms-cache-v4",
+    source: "x-api-and-spacex-cms-cache-v5",
     user: user,
     pinned: pinned,
     timeline: timeline,

@@ -64,8 +64,8 @@ final class BroadcastLibrary: ObservableObject {
     private let calendar: Calendar
     private let pageSize = 10
     private let maximumRequestedLimit = 20
-    private let cacheVersion = 28
-    private let cardCacheVersion = 4
+    private let cacheVersion = 29
+    private let cardCacheVersion = 5
     /// When the next launch is this close, auto-refresh once for that launch in the background.
     static let nearLaunchRefreshWindow: TimeInterval = 5 * 60
     private let xAPICacheURL = URL(string: "https://www.sighmon.com/spacex-tv/x-cache.json")!

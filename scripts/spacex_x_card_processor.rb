@@ -9,7 +9,7 @@ class SpaceXXCardProcessor
   # processed_cards payload is never written over a previously good cache.
   class FatalWebConfigurationError < RuntimeError; end
 
-  CACHE_VERSION = 4
+  CACHE_VERSION = 5
   REPLAY_TTL = 7 * 24 * 60 * 60
   LIVE_TTL = 15 * 60
   NEGATIVE_TTL = 25 * 60 * 60
@@ -151,25 +151,18 @@ class SpaceXXCardProcessor
       )
     end
 
-    stream_url, page_thumbnail = stream_from_page("https://x.com/spacex/status/#{post.fetch("id")}")
-    if stream_url
-      card_entry(
-        fingerprint: fingerprint,
-        stream_url: stream_url,
-        thumbnail_url: thumbnail_url || page_thumbnail,
-        content_kind: "video",
-        ttl: REPLAY_TTL
-      )
-    else
-      card_entry(
-        fingerprint: fingerprint,
-        stream_url: nil,
-        thumbnail_url: nil,
-        content_kind: "video",
-        has_usable_content: false,
-        ttl: NEGATIVE_TTL
-      )
-    end
+    # A rendered X status page includes replies and recommendations. Scanning the
+    # whole document for a stream can therefore attach somebody else's video to
+    # an otherwise text-only SpaceX post. With no API media or explicit broadcast
+    # link, the post has no usable card content.
+    card_entry(
+      fingerprint: fingerprint,
+      stream_url: nil,
+      thumbnail_url: nil,
+      content_kind: "video",
+      has_usable_content: false,
+      ttl: NEGATIVE_TTL
+    )
   rescue FatalWebConfigurationError
     # Missing X web guest credentials would leave livestream cards unplayable.
     # Fail the job so the previous cache file is left in place.
@@ -551,12 +544,6 @@ class SpaceXXCardProcessor
   def tweet_result_query_id(body)
     body[/queryId:"([^"]+)",operationName:"TweetResultByRestId"/, 1] ||
       body[/operationName:"TweetResultByRestId",queryId:"([^"]+)"/, 1]
-  end
-
-  def stream_from_page(url)
-    body = normalized_page_body(request_text(url))
-    stream_url = body.scan(%r{https://[^"'<>\s\\]+\.m3u8(?:\?[^"'<>\s\\]+)?}).first
-    [stream_url, page_thumbnail(body)]
   end
 
   def page_thumbnail_for(url)

@@ -233,6 +233,22 @@ struct BroadcastDiscovery {
                 continue
             }
 
+            if candidate.streamURL == nil, !candidate.allowsDeferredStreamResolution {
+                // Rendered X status pages include replies and recommendations. A whole-page
+                // stream scan can attach somebody else's video to a text-only SpaceX post.
+                report.add("Skipping status without API media or broadcast link: \(statusURL.lastPathComponent)")
+                cardCache.record(
+                    for: candidate,
+                    streamURL: nil,
+                    thumbnailURL: nil,
+                    isLive: nil,
+                    contentKind: .video,
+                    hasUsableContent: false,
+                    validFor: .failedProbe
+                )
+                continue
+            }
+
             report.add("Probing \(index + 1): \(statusURL.lastPathComponent)")
 
             do {
@@ -601,7 +617,7 @@ struct BroadcastDiscovery {
         } else if !galleryImages.isEmpty {
             report.add("Image gallery for \(post.id) from \(mediaSource): \(galleryImages.count) photos")
         } else {
-            report.add("No API media variant for \(post.id); will page-probe")
+            report.add("No API media variant or broadcast link for \(post.id); will skip")
         }
         if let referencedContentTweetID = post.referencedContentTweetID {
             report.add("\(post.referencedContentTweetType ?? "Referenced") status for \(post.id): \(referencedContentTweetID), media objects \(referencedContentMedia.count)")
@@ -1369,8 +1385,8 @@ struct BroadcastCandidate {
     }
 
     /// Multi-video posts, or posts that mix playable video and photos, open a media picker.
-    /// Videos without a stream URL are excluded so they fall through to single-video probe
-    /// or gallery rather than becoming unplayable picker entries.
+    /// Videos without a stream URL are excluded so they fall through to gallery or
+    /// negative-card handling rather than becoming unplayable picker entries.
     var requiresMediaCollection: Bool {
         let playable = playableCollectionMediaItems
         let videoCount = playable.filter { $0.kind == .video }.count
@@ -1491,7 +1507,7 @@ struct BroadcastDiscoveryFailure: LocalizedError {
 // and negative results (plain posts that contain neither). This avoids re-checking
 // the same unchanged non-broadcast/non-gallery posts on every refresh.
 struct CardResolutionCache: Codable {
-    var version: Int = 4
+    var version: Int = 5
     var entries: [String: CardResolutionEntry] = [:]
 
     mutating func merge(_ incoming: CardResolutionCache) -> Int {
