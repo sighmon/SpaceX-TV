@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var library: BroadcastLibrary
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @FocusState private var tokenFocused: Bool
     @State private var showingDeleteConfirm = false
 
@@ -38,27 +39,28 @@ struct SettingsView: View {
             )
             .ignoresSafeArea()
 
-            VStack(alignment: .leading, spacing: 34) {
-                if library.showsSpaceXLogos {
-                    VStack(alignment: .leading, spacing: 22) {
-                        Text("X API")
-                            .font(.title2.weight(.semibold))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 34) {
+                    if library.showsSpaceXLogos {
+                        VStack(alignment: .leading, spacing: 22) {
+                            Text("X API")
+                                .font(.title2.weight(.semibold))
 
-                        SecureField("Bearer Token", text: $library.xAPIBearerToken)
-                            .textContentType(.password)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 14)
-                            .background(.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(.white.opacity(tokenFocused ? 0.65 : 0.14), lineWidth: tokenFocused ? 3 : 1)
-                            }
-                            .focused($tokenFocused)
+                            SecureField("Bearer Token", text: $library.xAPIBearerToken)
+                                .textContentType(.password)
+                                .autocorrectionDisabled()
+                                .textInputAutocapitalization(.never)
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 14)
+                                .background(.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(.white.opacity(tokenFocused ? 0.65 : 0.14), lineWidth: tokenFocused ? 3 : 1)
+                                }
+                                .focused($tokenFocused)
 
-                        Toggle("Use your Bearer Token", isOn: $library.usesXAPIBearerToken)
-                            .font(.body.weight(.medium))
+                            Toggle("Use your Bearer Token", isOn: $library.usesXAPIBearerToken)
+                                .font(.body.weight(.medium))
 
 //                    Button {
 //                        Task { await library.refresh() }
@@ -67,84 +69,85 @@ struct SettingsView: View {
 //                            .font(.title3.weight(.semibold))
 //                    }
 
-                        Text(library.usesXAPIBearerToken ? "Using your token for X API timeline discovery." : "Using X API cache for timeline discovery.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                            Text(library.usesXAPIBearerToken ? "Using your token for X API timeline discovery." : "Using X API cache for timeline discovery.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(28)
+                        .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+                    }
+
+                    VStack(alignment: .leading, spacing: 18) {
+                        Text("Settings")
+                            .font(.title2.weight(.semibold))
+
+                        Toggle("Show next launch countdown", isOn: $library.showsNextLaunchCountdown)
+                            .font(.body.weight(.medium))
+
+                        Toggle("Show card filters", isOn: $library.showsCardFilters)
+                            .font(.body.weight(.medium))
+
+                        Toggle("Prefer MP4 playback", isOn: $library.prefersMP4Playback)
+                            .font(.body.weight(.medium))
+                            .onChange(of: library.prefersMP4Playback) {
+                                Task { await library.refresh() }
+                            }
+
+                        Toggle("Show player debug overlay", isOn: $library.showsPlayerDebugOverlay)
+                            .font(.body.weight(.medium))
+
+                        Button("Delete Caches", role: .destructive) {
+                            showingDeleteConfirm = true
+                        }
+                        .font(.body.weight(.medium))
                     }
                     .padding(28)
                     .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
-                }
-
-                VStack(alignment: .leading, spacing: 18) {
-                    Text("Settings")
-                        .font(.title2.weight(.semibold))
-
-                    Toggle("Show next launch countdown", isOn: $library.showsNextLaunchCountdown)
-                        .font(.body.weight(.medium))
-
-                    Toggle("Show card filters", isOn: $library.showsCardFilters)
-                        .font(.body.weight(.medium))
-
-                    Toggle("Prefer MP4 playback", isOn: $library.prefersMP4Playback)
-                        .font(.body.weight(.medium))
-                        .onChange(of: library.prefersMP4Playback) {
-                            Task { await library.refresh() }
+                    .confirmationDialog(
+                        "Delete cached data?",
+                        isPresented: $showingDeleteConfirm,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Delete App Cache and Card Checks", role: .destructive) {
+                            library.clearCaches()
                         }
-
-                    Toggle("Show player debug overlay", isOn: $library.showsPlayerDebugOverlay)
-                        .font(.body.weight(.medium))
-
-                    Button("Delete Caches", role: .destructive) {
-                        showingDeleteConfirm = true
+                        Button("Cancel", role: .cancel) { }
+                    } message: {
+                        Text("Clears the daily broadcast cache and the per-card check results that speed up refreshes and daily updates. On-screen content remains until you refresh.")
                     }
-                    .font(.body.weight(.medium))
-                }
-                .padding(28)
-                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
-                .confirmationDialog(
-                    "Delete cached data?",
-                    isPresented: $showingDeleteConfirm,
-                    titleVisibility: .visible
-                ) {
-                    Button("Delete App Cache and Card Checks", role: .destructive) {
-                        library.clearCaches()
-                    }
-                    Button("Cancel", role: .cancel) { }
-                } message: {
-                    Text("Clears the daily broadcast cache and the per-card check results that speed up refreshes and daily updates. On-screen content remains until you refresh.")
-                }
 
-                VStack(spacing: 18) {
-                    Text("Made on Earth by humans")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-
-                    HStack(spacing: 5) {
-                        Text("T+")
-                            .foregroundStyle(.white.opacity(0.38))
-
-                        Text(formattedViewingTime)
-                            .foregroundStyle(.white.opacity(0.68))
-                    }
-                    .font(.callout.weight(.bold).monospacedDigit())
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Time watched \(formattedViewingTime)")
-
-                    if !versionText.isEmpty {
-                        Text(versionText)
+                    VStack(spacing: 18) {
+                        Text("Made on Earth by humans")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .center)
-                            .opacity(0.6)
+
+                        HStack(spacing: 5) {
+                            Text("T+")
+                                .foregroundStyle(.white.opacity(0.38))
+
+                            Text(formattedViewingTime)
+                                .foregroundStyle(.white.opacity(0.68))
+                        }
+                        .font(.callout.weight(.bold).monospacedDigit())
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("Time watched \(formattedViewingTime)")
+
+                        if !versionText.isEmpty {
+                            Text(versionText)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .opacity(0.6)
+                        }
                     }
+                    .padding(28)
                 }
-                .padding(28)
+                .frame(maxWidth: 920, alignment: .topLeading)
+                .padding(.horizontal, horizontalSizeClass == .compact ? 24 : 84)
+                .padding(.vertical, 54)
             }
-            .frame(maxWidth: 920, maxHeight: .infinity, alignment: .topLeading)
-            .padding(.horizontal, 84)
-            .padding(.vertical, 54)
         }
         // .navigationTitle("Settings")
     }

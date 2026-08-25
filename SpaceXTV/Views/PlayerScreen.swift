@@ -303,15 +303,19 @@ struct PlayerScreen: View {
                         resumePosition: resumePosition,
                         alternateStreamDescription: model.alternateStreamDescription,
                         onTapped: {
+#if os(tvOS)
                             showPlaybackBackButton()
+#endif
                         },
                         onPlaybackPausedChanged: { isPaused in
+#if os(tvOS)
                             isPlaybackPaused = isPaused
                             if isPaused {
                                 showPlaybackBackButton(autoHide: false)
                             } else {
                                 hidePlaybackBackButtonAfterDelay()
                             }
+#endif
                         },
                         onPlaybackTimeAdvanced: { duration in
                             uncommittedViewingTime += duration
@@ -341,6 +345,7 @@ struct PlayerScreen: View {
                     .id(playbackGeneration)
                     .ignoresSafeArea()
 
+#if os(tvOS)
                     if showsPlaybackBackButton || isPlaybackPaused {
                         playbackBackButton
                             .padding(.top, 18)
@@ -348,6 +353,7 @@ struct PlayerScreen: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                             .transition(.opacity)
                     }
+#endif
 
                     if library.showsPlayerDebugOverlay {
                         PlayerDebugOverlay(lines: model.debugLines)
@@ -395,7 +401,7 @@ struct PlayerScreen: View {
 #if !os(tvOS)
     private var hidesStatusBar: Bool {
         guard case .ready = model.state else { return false }
-        return !showsPlaybackBackButton && !isPlaybackPaused
+        return true
     }
 #endif
 

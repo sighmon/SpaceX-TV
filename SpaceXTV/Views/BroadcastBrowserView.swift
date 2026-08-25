@@ -18,6 +18,7 @@ struct BroadcastBrowserView: View {
     private let launchScheduleService = SpaceXLaunchScheduleService()
     private let loadsNextLaunch: Bool
     private let spaceXLogoAspectRatio: CGFloat = 1
+    private let compactHeaderControlHeight: CGFloat = 44
 #if os(tvOS)
     private let headerControlHeight: CGFloat = 76
 #else
@@ -314,7 +315,12 @@ struct BroadcastBrowserView: View {
 #endif
                 .foregroundStyle(isHighlighted ? Color.black : Color.white.opacity(0.86))
                 .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+                .frame(
+                    height: horizontalSizeClass == .compact
+                        ? compactHeaderControlHeight
+                        : nil
+                )
+                .padding(.vertical, horizontalSizeClass == .compact ? 0 : 10)
                 .background(
                     chipBackground(isSelected: isSelected, isFocused: isFocused),
                     in: Capsule()
@@ -340,23 +346,37 @@ struct BroadcastBrowserView: View {
         return .white.opacity(0.12)
     }
 
+    @ViewBuilder
     private func headerButton(systemImage: String, control: HeaderControl, action: @escaping () -> Void) -> some View {
         let isFocused = focusedHeaderControl == control
 
-        return Button(action: action) {
-            Image(systemName: systemImage)
+        if horizontalSizeClass == .compact {
+            Button(action: action) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: compactHeaderControlHeight, height: compactHeaderControlHeight)
+                    .background(.white.opacity(0.12), in: Capsule())
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .focused($focusedHeaderControl, equals: control)
+            .accessibilityAddTraits(.isButton)
+        } else {
+            Button(action: action) {
+                Image(systemName: systemImage)
 #if os(tvOS)
-                .font(.system(size: 38, weight: .semibold))
+                    .font(.system(size: 38, weight: .semibold))
 #else
-                .font(.system(size: 30, weight: .semibold))
+                    .font(.system(size: 30, weight: .semibold))
 #endif
-                .frame(width: 58, height: 58)
-                .contentShape(Rectangle())
+                    .frame(width: 58, height: 58)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.bordered)
+            .focused($focusedHeaderControl, equals: control)
+            .scaleEffect(isFocused ? 1.06 : 1)
+            .animation(.easeOut(duration: 0.16), value: isFocused)
         }
-        .buttonStyle(.bordered)
-        .focused($focusedHeaderControl, equals: control)
-        .scaleEffect(isFocused ? 1.06 : 1)
-        .animation(.easeOut(duration: 0.16), value: isFocused)
     }
 
     @ViewBuilder
@@ -834,6 +854,7 @@ private struct NextLaunchCountdownView: View {
         }
         .fixedSize(horizontal: true, vertical: false)
         .layoutPriority(1)
+        .padding(.leading, width < 760 ? -countdownLeadingCorrection : 0)
         .padding(.trailing, width < 760 ? 0 : -countdownTrailingCorrection)
         .frame(maxWidth: width < 760 ? .infinity : nil, alignment: width < 760 ? .leading : .trailing)
         .accessibilityLabel(remaining.accessibilityText)
@@ -856,6 +877,14 @@ private struct NextLaunchCountdownView: View {
         0
 #else
         12
+#endif
+    }
+
+    private var countdownLeadingCorrection: CGFloat {
+#if os(tvOS)
+        0
+#else
+        width < 420 ? 8 : 13
 #endif
     }
 
