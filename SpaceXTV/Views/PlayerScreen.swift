@@ -592,6 +592,14 @@ struct PlayerScreen: View {
     @State private var uncommittedViewingTime: TimeInterval = 0
     @State private var backButtonHideTask: Task<Void, Never>?
 
+    private var publishesSharedPlaybackState: Bool {
+#if os(iOS)
+        true
+#else
+        publishesExternalControls
+#endif
+    }
+
     init(broadcast: Broadcast, publishesExternalControls: Bool = false) {
         self.publishesExternalControls = publishesExternalControls
         self.thumbnailURL = broadcast.thumbnailURL
@@ -625,7 +633,7 @@ struct PlayerScreen: View {
                         alternateStreamDescription: model.alternateStreamDescription,
                         showsPlaybackControls: !publishesExternalControls,
                         onPlayerChanged: { player, isAttached in
-                            guard publishesExternalControls else { return }
+                            guard publishesSharedPlaybackState else { return }
                             if isAttached {
                                 externalPlayback.playerDidAttach(
                                     player,
@@ -820,6 +828,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
         controller.showsPlaybackControls = showsPlaybackControls
         controller.videoGravity = .resizeAspect
 #if !os(tvOS)
+        controller.updatesNowPlayingInfoCenter = false
         host.isModalInPresentation = true
         host.shouldReportFullScreenDismissal = {
             !context.coordinator.isPictureInPicturePresentationActive
