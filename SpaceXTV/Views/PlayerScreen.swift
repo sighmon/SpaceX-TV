@@ -1,6 +1,7 @@
 import AVKit
 #if os(iOS)
 import MediaPlayer
+import UIKit
 #endif
 import SwiftUI
 
@@ -291,15 +292,19 @@ final class ExternalPlaybackController: ObservableObject {
     private var remoteCommandTargets: [RemoteCommandTarget] = []
     private var hasConfiguredRemoteCommands = false
     private var lastNowPlayingUpdate = Date.distantPast
+    private var artworkTask: Task<Void, Never>?
+    private var artworkURL: URL?
+    private var nowPlayingArtwork: MPMediaItemArtwork?
 #endif
 
     var canSeek: Bool {
         isAvailable && seekableEnd > seekableStart
     }
 
-    func playerDidAttach(_ player: AVPlayer, title: String) {
+    func playerDidAttach(_ player: AVPlayer, title: String, thumbnailURL: URL?) {
         if self.player === player {
             self.title = title
+            loadNowPlayingArtwork(from: thumbnailURL)
             refreshState(for: player, at: player.currentTime())
             updateNowPlayingInfo(force: true)
             return
@@ -314,6 +319,7 @@ final class ExternalPlaybackController: ObservableObject {
         isAvailable = true
         configureRemoteCommandsIfNeeded()
         setRemoteCommandsEnabled(true)
+        loadNowPlayingArtwork(from: thumbnailURL)
 
         timeObserver = player.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
@@ -517,13 +523,56 @@ final class ExternalPlaybackController: ObservableObject {
         if duration > 0 {
             info[MPMediaItemPropertyPlaybackDuration] = duration
         }
+        if let nowPlayingArtwork {
+            info[MPMediaItemPropertyArtwork] = nowPlayingArtwork
+        }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
         setRemoteCommandsEnabled(true)
 #endif
     }
 
+    private func loadNowPlayingArtwork(from url: URL?) {
+#if os(iOS)
+        guard artworkURL != url else { return }
+        artworkTask?.cancel()
+        artworkURL = url
+        nowPlayingArtwork = nil
+        updateNowPlayingInfo(force: true)
+
+        guard let url else { return }
+        artworkTask = Task { [weak self] in
+            do {
+                var request = URLRequest(url: url)
+                request.setValue("Mozilla/5.0 iPhone SpaceXTV/1.0", forHTTPHeaderField: "User-Agent")
+                request.setValue("image/avif,image/webp,image/apng,image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+                request.timeoutInterval = 15
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard !Task.isCancelled,
+                      let response = response as? HTTPURLResponse,
+                      (200 ..< 300).contains(response.statusCode),
+                      let image = UIImage(data: data),
+                      let self,
+                      self.artworkURL == url else {
+                    return
+                }
+
+                self.nowPlayingArtwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+                self.updateNowPlayingInfo(force: true)
+            } catch {
+                guard !Task.isCancelled else { return }
+                print("[SpaceXTV] Now Playing artwork load failed: \(error.localizedDescription)")
+            }
+        }
+#endif
+    }
+
     private func clearNowPlayingInfo() {
 #if os(iOS)
+        artworkTask?.cancel()
+        artworkTask = nil
+        artworkURL = nil
+        nowPlayingArtwork = nil
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         lastNowPlayingUpdate = .distantPast
         setRemoteCommandsEnabled(false)
@@ -537,6 +586,7 @@ struct PlayerScreen: View {
     @EnvironmentObject private var externalPlayback: ExternalPlaybackController
     @StateObject private var model: PlayerViewModel
     private let publishesExternalControls: Bool
+    private let thumbnailURL: URL?
     @State private var showsPlaybackBackButton = false
     @State private var isPlaybackPaused = false
     @State private var uncommittedViewingTime: TimeInterval = 0
@@ -544,12 +594,14 @@ struct PlayerScreen: View {
 
     init(broadcast: Broadcast, publishesExternalControls: Bool = false) {
         self.publishesExternalControls = publishesExternalControls
+        self.thumbnailURL = broadcast.thumbnailURL
         _model = StateObject(wrappedValue: PlayerViewModel(broadcast: broadcast))
     }
 
 #if DEBUG
     init(previewState: PlayerViewModel.State, broadcast: Broadcast) {
         self.publishesExternalControls = false
+        self.thumbnailURL = broadcast.thumbnailURL
         _model = StateObject(wrappedValue: PlayerViewModel(previewState: previewState, broadcast: broadcast))
     }
 #endif
@@ -575,7 +627,11 @@ struct PlayerScreen: View {
                         onPlayerChanged: { player, isAttached in
                             guard publishesExternalControls else { return }
                             if isAttached {
-                                externalPlayback.playerDidAttach(player, title: title)
+                                externalPlayback.playerDidAttach(
+                                    player,
+                                    title: title,
+                                    thumbnailURL: thumbnailURL
+                                )
                             } else {
                                 externalPlayback.playerDidDetach(player)
                             }
