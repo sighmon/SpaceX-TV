@@ -2,10 +2,9 @@ import SwiftUI
 
 struct MediaCollectionScreen: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @EnvironmentObject private var navigation: AppNavigationState
     var collection: Broadcast
 
-    @State private var selectedBroadcast: Broadcast?
-    @State private var selectedGallery: Broadcast?
     @FocusState private var focusedEntryID: String?
 
     private var entries: [MediaCollectionEntry] {
@@ -43,28 +42,6 @@ struct MediaCollectionScreen: View {
             .ignoresSafeArea(edges: .bottom)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationDestination(item: $selectedBroadcast) { broadcast in
-            PlayerScreen(broadcast: broadcast)
-        }
-#if os(tvOS)
-        .navigationDestination(item: $selectedGallery) { gallery in
-            GalleryScreen(gallery: gallery)
-        }
-#endif
-#if !os(tvOS)
-        .overlay {
-            if let selectedGallery {
-                GalleryScreen(gallery: selectedGallery) {
-                    withAnimation(.easeInOut(duration: 0.28)) {
-                        self.selectedGallery = nil
-                    }
-                }
-                .transition(.move(edge: .trailing))
-                .zIndex(1)
-            }
-        }
-        .animation(.easeInOut(duration: 0.28), value: selectedGallery?.id)
-#endif
     }
 
     private var header: some View {
@@ -143,9 +120,9 @@ struct MediaCollectionScreen: View {
     private func select(_ entry: MediaCollectionEntry) {
         switch entry {
         case let .video(item, index, totalVideos):
-            selectedBroadcast = collection.videoBroadcast(for: item, index: index, totalVideos: totalVideos)
+            navigation.selectedBroadcast = collection.videoBroadcast(for: item, index: index, totalVideos: totalVideos)
         case let .photos(images):
-            selectedGallery = collection.photoGalleryBroadcast(images: images)
+            navigation.selectedGallery = collection.photoGalleryBroadcast(images: images)
         }
     }
 

@@ -2,45 +2,60 @@ import SwiftUI
 import UIKit
 
 struct RootView: View {
-    @State private var selectedBroadcast: Broadcast?
-    @State private var selectedGallery: Broadcast?
-    @State private var selectedCollection: Broadcast?
-    @State private var showsSettings = false
+    @EnvironmentObject private var navigation: AppNavigationState
+    var isExternalDisplay = false
 
     var body: some View {
         ZStack {
             NavigationStack {
                 BroadcastBrowserView(
-                    selectedBroadcast: $selectedBroadcast,
-                    selectedGallery: $selectedGallery,
-                    selectedCollection: $selectedCollection,
-                    showsSettings: $showsSettings
+                    selectedBroadcast: $navigation.selectedBroadcast,
+                    selectedGallery: $navigation.selectedGallery,
+                    selectedCollection: $navigation.selectedCollection,
+                    showsSettings: $navigation.showsSettings
                     )
                     .toolbar(.hidden, for: .navigationBar)
-                    .navigationDestination(item: $selectedBroadcast) { broadcast in
+                    .navigationDestination(item: $navigation.selectedBroadcast) { broadcast in
+#if os(tvOS)
                         if broadcast.sourceKind == .youtube {
                             YouTubeLaunchScreen(broadcast: broadcast)
                         } else {
                             PlayerScreen(broadcast: broadcast)
                         }
+#else
+                        if broadcast.sourceKind == .youtube {
+                            if isExternalDisplay {
+                                Color.black.ignoresSafeArea()
+                            } else {
+                                YouTubeLaunchScreen(broadcast: broadcast)
+                            }
+                        } else if isExternalDisplay {
+                            PlayerScreen(broadcast: broadcast, publishesExternalControls: true)
+                        } else if navigation.isExternalDisplayConnected {
+                            ExternalPlaybackStatusView(broadcast: broadcast)
+                        } else {
+                            PlayerScreen(broadcast: broadcast)
+                        }
+#endif
                     }
 #if os(tvOS)
-                    .navigationDestination(item: $selectedGallery) { gallery in
+                    .navigationDestination(item: $navigation.selectedGallery) { gallery in
                         GalleryScreen(gallery: gallery)
                     }
 #endif
-                    .navigationDestination(item: $selectedCollection) { collection in
+                    .navigationDestination(item: $navigation.selectedCollection) { collection in
                         MediaCollectionScreen(collection: collection)
                     }
-                    .navigationDestination(isPresented: $showsSettings) {
+                    .navigationDestination(isPresented: $navigation.showsSettings) {
                         SettingsView()
                     }
             }
+            .id(isExternalDisplay ? navigation.externalPlaybackPresentationGeneration : 0)
 #if !os(tvOS)
-            if let selectedGallery {
+            if let selectedGallery = navigation.selectedGallery {
                 GalleryScreen(gallery: selectedGallery) {
                     withAnimation(.easeInOut(duration: 0.28)) {
-                        self.selectedGallery = nil
+                        navigation.selectedGallery = nil
                     }
                 }
                 .transition(.move(edge: .trailing))
@@ -49,10 +64,186 @@ struct RootView: View {
 #endif
         }
 #if !os(tvOS)
-        .animation(.easeInOut(duration: 0.28), value: selectedGallery?.id)
+        .animation(.easeInOut(duration: 0.28), value: navigation.selectedGallery?.id)
 #endif
     }
 }
+
+#if !os(tvOS)
+private struct ExternalPlaybackStatusView: View {
+    @EnvironmentObject private var playback: ExternalPlaybackController
+    @EnvironmentObject private var navigation: AppNavigationState
+    let broadcast: Broadcast
+    @State private var scrubPosition: Double = 0
+    @State private var isScrubbing = false
+    @GestureState private var dismissalOffset: CGFloat = 0
+
+    var body: some View {
+        ZStack {
+            Color.black
+                .ignoresSafeArea()
+
+            VStack(spacing: 28) {
+                Image(systemName: "airplayvideo")
+                    .font(.system(size: 38, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                VStack(spacing: 8) {
+                    Text(playback.title.isEmpty ? broadcast.title : playback.title)
+                        .font(.title2.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(3)
+
+                    HStack(spacing: 8) {
+                        if playback.isBuffering || !playback.isAvailable {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                        Text(playbackStatus)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                VStack(spacing: 10) {
+                    Slider(
+                        value: Binding(
+                            get: { displayedTime },
+                            set: { value in
+                                scrubPosition = value
+                                isScrubbing = true
+                            }
+                        ),
+                        in: sliderRange,
+                        onEditingChanged: { editing in
+                            if editing {
+                                scrubPosition = displayedTime
+                            } else {
+                                playback.seek(to: scrubPosition)
+                                isScrubbing = false
+                            }
+                        }
+                    )
+                    .disabled(!playback.canSeek)
+
+                    HStack {
+                        Text(formattedTime(displayedTime - playback.seekableStart))
+                        Spacer()
+                        Text(formattedTime(playback.seekableEnd - playback.seekableStart))
+                    }
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                }
+
+                Button {
+                    playback.togglePlayback()
+                } label: {
+                    Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 24, weight: .semibold))
+                        .frame(width: 60, height: 60)
+                        .background(.white, in: Circle())
+                        .foregroundStyle(.black)
+                }
+                .buttonStyle(.plain)
+                .disabled(!playback.isAvailable)
+                .opacity(playback.isAvailable ? 1 : 0.45)
+                .accessibilityLabel(playback.isPlaying ? "Pause" : "Play")
+            }
+            .frame(maxWidth: 560)
+            .padding(.horizontal, 32)
+            .padding(.vertical, 48)
+        }
+        .overlay(alignment: .top) {
+            Capsule()
+                .fill(.white.opacity(0.34))
+                .frame(width: 36, height: 5)
+                .padding(.top, 9)
+                .accessibilityHidden(true)
+        }
+        .overlay(alignment: .topLeading) {
+            Button {
+                closePlayer()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 44, height: 44)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white)
+            .contentShape(Circle())
+            .padding(.leading, 16)
+            .padding(.top, 12)
+            .accessibilityLabel("Close player")
+        }
+        .offset(y: dismissalOffset)
+        .scaleEffect(1 - min(dismissalOffset / 1_500, 0.04))
+        .simultaneousGesture(dismissalGesture)
+        .accessibilityAction(.escape) {
+            closePlayer()
+        }
+        .toolbar(.hidden, for: .navigationBar)
+    }
+
+    private var dismissalGesture: some Gesture {
+        DragGesture(minimumDistance: 12)
+            .updating($dismissalOffset) { value, offset, _ in
+                guard !isScrubbing,
+                      value.translation.height > 0,
+                      value.translation.height > abs(value.translation.width) * 1.25 else {
+                    return
+                }
+                offset = value.translation.height
+            }
+            .onEnded { value in
+                guard !isScrubbing,
+                      value.translation.height > 0,
+                      value.translation.height > abs(value.translation.width) * 1.25 else {
+                    return
+                }
+
+                if value.translation.height > 120 || value.predictedEndTranslation.height > 240 {
+                    closePlayer()
+                }
+            }
+    }
+
+    private func closePlayer() {
+        playback.stopAndClear()
+        withAnimation(.easeOut(duration: 0.2)) {
+            navigation.dismissPlayer()
+        }
+    }
+
+    private var sliderRange: ClosedRange<Double> {
+        let start = playback.seekableStart
+        return start ... max(playback.seekableEnd, start + 1)
+    }
+
+    private var displayedTime: Double {
+        let time = isScrubbing ? scrubPosition : playback.currentTime
+        return min(max(time, playback.seekableStart), playback.seekableEnd)
+    }
+
+    private var playbackStatus: String {
+        if !playback.isAvailable { return "Preparing the external display" }
+        if playback.isBuffering { return "Buffering on the external display" }
+        return "Playing on the external display"
+    }
+
+    private func formattedTime(_ time: Double) -> String {
+        guard time.isFinite, time >= 0 else { return "--:--" }
+        let totalSeconds = Int(time.rounded(.down))
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        }
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+}
+#endif
 
 private struct YouTubeLaunchScreen: View {
     let broadcast: Broadcast

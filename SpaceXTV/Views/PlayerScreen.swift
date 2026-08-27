@@ -266,21 +266,167 @@ private func playbackReferer(for streamURL: URL) -> String {
     return "https://x.com/"
 }
 
+@MainActor
+final class ExternalPlaybackController: ObservableObject {
+    @Published private(set) var title = ""
+    @Published private(set) var isAvailable = false
+    @Published private(set) var isPlaying = false
+    @Published private(set) var isBuffering = false
+    @Published private(set) var currentTime: Double = 0
+    @Published private(set) var seekableStart: Double = 0
+    @Published private(set) var seekableEnd: Double = 0
+
+    private var player: AVPlayer?
+    private var timeObserver: Any?
+    private var timeControlObservation: NSKeyValueObservation?
+
+    var canSeek: Bool {
+        isAvailable && seekableEnd > seekableStart
+    }
+
+    func playerDidAttach(_ player: AVPlayer, title: String) {
+        if self.player === player {
+            self.title = title
+            refreshState(for: player, at: player.currentTime())
+            return
+        }
+
+        let previousPlayer = self.player
+        removeObservers()
+        previousPlayer?.pause()
+        previousPlayer?.replaceCurrentItem(with: nil)
+        self.player = player
+        self.title = title
+        isAvailable = true
+
+        timeObserver = player.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
+            queue: .main
+        ) { [weak self, weak player] time in
+            guard let self, let player else { return }
+            Task { @MainActor in
+                guard self.player === player else { return }
+                self.refreshState(for: player, at: time)
+            }
+        }
+
+        timeControlObservation = player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] observedPlayer, _ in
+            Task { @MainActor in
+                guard let self, self.player === observedPlayer else { return }
+                self.refreshState(for: observedPlayer, at: observedPlayer.currentTime())
+            }
+        }
+    }
+
+    func playerDidDetach(_ player: AVPlayer) {
+        guard self.player === player else { return }
+        removeObservers()
+        self.player = nil
+        resetPublishedState()
+    }
+
+    func stopAndClear() {
+        guard let player else {
+            resetPublishedState()
+            return
+        }
+
+        playerDidDetach(player)
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+    }
+
+    func togglePlayback() {
+        guard let player else { return }
+        if player.timeControlStatus == .paused {
+            player.play()
+        } else {
+            player.pause()
+        }
+        refreshState(for: player, at: player.currentTime())
+    }
+
+    func seek(to seconds: Double) {
+        guard let player, canSeek else { return }
+        let clampedTime = min(max(seconds, seekableStart), seekableEnd)
+        currentTime = clampedTime
+        player.seek(
+            to: CMTime(seconds: clampedTime, preferredTimescale: 600),
+            toleranceBefore: .zero,
+            toleranceAfter: .zero
+        ) { [weak self, weak player] _ in
+            guard let self, let player else { return }
+            Task { @MainActor in
+                guard self.player === player else { return }
+                self.refreshState(for: player, at: player.currentTime())
+            }
+        }
+    }
+
+    private func refreshState(for player: AVPlayer, at time: CMTime) {
+        let seconds = time.seconds
+        if seconds.isFinite {
+            currentTime = seconds
+        }
+
+        isPlaying = player.timeControlStatus != .paused
+        isBuffering = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
+
+        if let item = player.currentItem {
+            let duration = item.duration.seconds
+            if duration.isFinite, duration > 0 {
+                seekableStart = 0
+                seekableEnd = duration
+            } else if let range = item.seekableTimeRanges.last?.timeRangeValue {
+                let start = range.start.seconds
+                let end = CMTimeRangeGetEnd(range).seconds
+                if start.isFinite, end.isFinite, end > start {
+                    seekableStart = start
+                    seekableEnd = end
+                }
+            }
+        }
+    }
+
+    private func removeObservers() {
+        timeControlObservation?.invalidate()
+        timeControlObservation = nil
+        if let timeObserver, let player {
+            player.removeTimeObserver(timeObserver)
+        }
+        timeObserver = nil
+    }
+
+    private func resetPublishedState() {
+        title = ""
+        isAvailable = false
+        isPlaying = false
+        isBuffering = false
+        currentTime = 0
+        seekableStart = 0
+        seekableEnd = 0
+    }
+}
+
 struct PlayerScreen: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var library: BroadcastLibrary
+    @EnvironmentObject private var externalPlayback: ExternalPlaybackController
     @StateObject private var model: PlayerViewModel
+    private let publishesExternalControls: Bool
     @State private var showsPlaybackBackButton = false
     @State private var isPlaybackPaused = false
     @State private var uncommittedViewingTime: TimeInterval = 0
     @State private var backButtonHideTask: Task<Void, Never>?
 
-    init(broadcast: Broadcast) {
+    init(broadcast: Broadcast, publishesExternalControls: Bool = false) {
+        self.publishesExternalControls = publishesExternalControls
         _model = StateObject(wrappedValue: PlayerViewModel(broadcast: broadcast))
     }
 
 #if DEBUG
     init(previewState: PlayerViewModel.State, broadcast: Broadcast) {
+        self.publishesExternalControls = false
         _model = StateObject(wrappedValue: PlayerViewModel(previewState: previewState, broadcast: broadcast))
     }
 #endif
@@ -302,6 +448,15 @@ struct PlayerScreen: View {
                         playbackGeneration: playbackGeneration,
                         resumePosition: resumePosition,
                         alternateStreamDescription: model.alternateStreamDescription,
+                        showsPlaybackControls: !publishesExternalControls,
+                        onPlayerChanged: { player, isAttached in
+                            guard publishesExternalControls else { return }
+                            if isAttached {
+                                externalPlayback.playerDidAttach(player, title: title)
+                            } else {
+                                externalPlayback.playerDidDetach(player)
+                            }
+                        },
                         onTapped: {
 #if os(tvOS)
                             showPlaybackBackButton()
@@ -460,6 +615,8 @@ struct TVPlayerView: UIViewControllerRepresentable {
     var playbackGeneration: Int
     var resumePosition: Double?
     var alternateStreamDescription: String?
+    var showsPlaybackControls: Bool
+    var onPlayerChanged: (AVPlayer, Bool) -> Void
     var onTapped: () -> Void
     var onPlaybackPausedChanged: (Bool) -> Void
     var onPlaybackTimeAdvanced: (TimeInterval) -> Void
@@ -478,8 +635,10 @@ struct TVPlayerView: UIViewControllerRepresentable {
         context.coordinator.alternateStreamDescription = alternateStreamDescription
         context.coordinator.lastPlaybackGeneration = playbackGeneration
         context.coordinator.configureAudioSession()
-        controller.player = context.coordinator.makePlayer(for: streamURL, title: title)
-        controller.showsPlaybackControls = true
+        let player = context.coordinator.makePlayer(for: streamURL, title: title)
+        controller.player = player
+        context.coordinator.onPlayerChanged(player, true)
+        controller.showsPlaybackControls = showsPlaybackControls
         controller.videoGravity = .resizeAspect
 #if !os(tvOS)
         host.isModalInPresentation = true
@@ -510,12 +669,14 @@ struct TVPlayerView: UIViewControllerRepresentable {
     func updateUIViewController(_ host: PlayerHostViewController, context: Context) {
         let controller = host.playerController
         context.coordinator.onTapped = onTapped
+        context.coordinator.onPlayerChanged = onPlayerChanged
         context.coordinator.onPlaybackPausedChanged = onPlaybackPausedChanged
         context.coordinator.onPlaybackTimeAdvanced = onPlaybackTimeAdvanced
         context.coordinator.onKeepWaiting = onKeepWaiting
         context.coordinator.onReloadStream = onReloadStream
         context.coordinator.onPlaybackFailure = onPlaybackFailure
         context.coordinator.alternateStreamDescription = alternateStreamDescription
+        controller.showsPlaybackControls = showsPlaybackControls
         host.onFullScreenDismissed = onFullScreenDismissed
 #if !os(tvOS)
         host.shouldReportFullScreenDismissal = {
@@ -533,6 +694,10 @@ struct TVPlayerView: UIViewControllerRepresentable {
         let oldPlayer = controller.player
         let player = context.coordinator.makePlayer(for: streamURL, title: title)
         controller.player = player
+        context.coordinator.onPlayerChanged(player, true)
+        if let oldPlayer {
+            context.coordinator.onPlayerChanged(oldPlayer, false)
+        }
         context.coordinator.stop(oldPlayer)
         startPlayback(player, at: resumePosition)
     }
@@ -565,6 +730,9 @@ struct TVPlayerView: UIViewControllerRepresentable {
         if controller.presentingViewController != nil {
             controller.dismiss(animated: false)
         }
+        if let player = controller.player {
+            coordinator.onPlayerChanged(player, false)
+        }
         coordinator.stop(controller.player)
         controller.player = nil
     }
@@ -572,6 +740,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator {
         Coordinator(
             playbackTitle: title,
+            onPlayerChanged: onPlayerChanged,
             onTapped: onTapped,
             onPlaybackPausedChanged: onPlaybackPausedChanged,
             onPlaybackTimeAdvanced: onPlaybackTimeAdvanced,
@@ -641,6 +810,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
 
     final class Coordinator: NSObject {
         var lastPlaybackGeneration = 0
+        var onPlayerChanged: (AVPlayer, Bool) -> Void
         var onTapped: () -> Void
         var onPlaybackPausedChanged: (Bool) -> Void
         var onPlaybackTimeAdvanced: (TimeInterval) -> Void
@@ -683,6 +853,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
 
         init(
             playbackTitle: String,
+            onPlayerChanged: @escaping (AVPlayer, Bool) -> Void,
             onTapped: @escaping () -> Void,
             onPlaybackPausedChanged: @escaping (Bool) -> Void,
             onPlaybackTimeAdvanced: @escaping (TimeInterval) -> Void,
@@ -693,6 +864,7 @@ struct TVPlayerView: UIViewControllerRepresentable {
             onDebug: @escaping (String) -> Void
         ) {
             self.playbackTitle = playbackTitle
+            self.onPlayerChanged = onPlayerChanged
             self.onTapped = onTapped
             self.onPlaybackPausedChanged = onPlaybackPausedChanged
             self.onPlaybackTimeAdvanced = onPlaybackTimeAdvanced
@@ -1281,6 +1453,7 @@ private extension Broadcast {
         )
     }
     .environmentObject(BroadcastLibrary(previewBroadcasts: [.previewNotStarted]))
+    .environmentObject(ExternalPlaybackController())
     .preferredColorScheme(.dark)
 }
 
@@ -1296,6 +1469,7 @@ private extension Broadcast {
         )
     }
     .environmentObject(BroadcastLibrary(previewBroadcasts: [.previewNotStarted]))
+    .environmentObject(ExternalPlaybackController())
     .preferredColorScheme(.dark)
 }
 #endif
