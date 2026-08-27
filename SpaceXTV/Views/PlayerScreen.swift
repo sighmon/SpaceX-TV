@@ -1,4 +1,7 @@
 import AVKit
+#if os(iOS)
+import MediaPlayer
+#endif
 import SwiftUI
 
 @MainActor
@@ -279,6 +282,16 @@ final class ExternalPlaybackController: ObservableObject {
     private var player: AVPlayer?
     private var timeObserver: Any?
     private var timeControlObservation: NSKeyValueObservation?
+#if os(iOS)
+    private struct RemoteCommandTarget {
+        let command: MPRemoteCommand
+        let token: Any
+    }
+
+    private var remoteCommandTargets: [RemoteCommandTarget] = []
+    private var hasConfiguredRemoteCommands = false
+    private var lastNowPlayingUpdate = Date.distantPast
+#endif
 
     var canSeek: Bool {
         isAvailable && seekableEnd > seekableStart
@@ -288,6 +301,7 @@ final class ExternalPlaybackController: ObservableObject {
         if self.player === player {
             self.title = title
             refreshState(for: player, at: player.currentTime())
+            updateNowPlayingInfo(force: true)
             return
         }
 
@@ -298,6 +312,8 @@ final class ExternalPlaybackController: ObservableObject {
         self.player = player
         self.title = title
         isAvailable = true
+        configureRemoteCommandsIfNeeded()
+        setRemoteCommandsEnabled(true)
 
         timeObserver = player.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
@@ -314,8 +330,11 @@ final class ExternalPlaybackController: ObservableObject {
             Task { @MainActor in
                 guard let self, self.player === observedPlayer else { return }
                 self.refreshState(for: observedPlayer, at: observedPlayer.currentTime())
+                self.updateNowPlayingInfo(force: true)
             }
         }
+        refreshState(for: player, at: player.currentTime())
+        updateNowPlayingInfo(force: true)
     }
 
     func playerDidDetach(_ player: AVPlayer) {
@@ -344,12 +363,14 @@ final class ExternalPlaybackController: ObservableObject {
             player.pause()
         }
         refreshState(for: player, at: player.currentTime())
+        updateNowPlayingInfo(force: true)
     }
 
     func seek(to seconds: Double) {
         guard let player, canSeek else { return }
         let clampedTime = min(max(seconds, seekableStart), seekableEnd)
         currentTime = clampedTime
+        updateNowPlayingInfo(force: true)
         player.seek(
             to: CMTime(seconds: clampedTime, preferredTimescale: 600),
             toleranceBefore: .zero,
@@ -359,6 +380,7 @@ final class ExternalPlaybackController: ObservableObject {
             Task { @MainActor in
                 guard self.player === player else { return }
                 self.refreshState(for: player, at: player.currentTime())
+                self.updateNowPlayingInfo(force: true)
             }
         }
     }
@@ -386,6 +408,7 @@ final class ExternalPlaybackController: ObservableObject {
                 }
             }
         }
+        updateNowPlayingInfo()
     }
 
     private func removeObservers() {
@@ -405,6 +428,106 @@ final class ExternalPlaybackController: ObservableObject {
         currentTime = 0
         seekableStart = 0
         seekableEnd = 0
+        clearNowPlayingInfo()
+    }
+
+    private func configureRemoteCommandsIfNeeded() {
+#if os(iOS)
+        guard !hasConfiguredRemoteCommands else { return }
+        hasConfiguredRemoteCommands = true
+
+        let commandCenter = MPRemoteCommandCenter.shared()
+        let playTarget = commandCenter.playCommand.addTarget { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let player = self.player else { return }
+                player.play()
+                self.refreshState(for: player, at: player.currentTime())
+                self.updateNowPlayingInfo(force: true)
+            }
+            return .success
+        }
+        remoteCommandTargets.append(RemoteCommandTarget(command: commandCenter.playCommand, token: playTarget))
+
+        let pauseTarget = commandCenter.pauseCommand.addTarget { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let player = self.player else { return }
+                player.pause()
+                self.refreshState(for: player, at: player.currentTime())
+                self.updateNowPlayingInfo(force: true)
+            }
+            return .success
+        }
+        remoteCommandTargets.append(RemoteCommandTarget(command: commandCenter.pauseCommand, token: pauseTarget))
+
+        let toggleTarget = commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
+            Task { @MainActor in
+                self?.togglePlayback()
+            }
+            return .success
+        }
+        remoteCommandTargets.append(RemoteCommandTarget(command: commandCenter.togglePlayPauseCommand, token: toggleTarget))
+
+        let positionTarget = commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let event = event as? MPChangePlaybackPositionCommandEvent else {
+                return .commandFailed
+            }
+            let relativePosition = event.positionTime
+            Task { @MainActor in
+                guard let self else { return }
+                self.seek(to: self.seekableStart + relativePosition)
+            }
+            return .success
+        }
+        remoteCommandTargets.append(RemoteCommandTarget(command: commandCenter.changePlaybackPositionCommand, token: positionTarget))
+
+        commandCenter.nextTrackCommand.isEnabled = false
+        commandCenter.previousTrackCommand.isEnabled = false
+        commandCenter.skipForwardCommand.isEnabled = false
+        commandCenter.skipBackwardCommand.isEnabled = false
+#endif
+    }
+
+    private func setRemoteCommandsEnabled(_ enabled: Bool) {
+#if os(iOS)
+        let commandCenter = MPRemoteCommandCenter.shared()
+        commandCenter.playCommand.isEnabled = enabled
+        commandCenter.pauseCommand.isEnabled = enabled
+        commandCenter.togglePlayPauseCommand.isEnabled = enabled
+        commandCenter.changePlaybackPositionCommand.isEnabled = enabled && canSeek
+#endif
+    }
+
+    private func updateNowPlayingInfo(force: Bool = false) {
+#if os(iOS)
+        guard isAvailable else { return }
+        let now = Date()
+        guard force || now.timeIntervalSince(lastNowPlayingUpdate) >= 1 else { return }
+        lastNowPlayingUpdate = now
+
+        let elapsedTime = max(0, currentTime - seekableStart)
+        let duration = max(0, seekableEnd - seekableStart)
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: title,
+            MPMediaItemPropertyArtist: "SpaceX",
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsedTime,
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
+            MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.video.rawValue,
+        ]
+        if duration > 0 {
+            info[MPMediaItemPropertyPlaybackDuration] = duration
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        setRemoteCommandsEnabled(true)
+#endif
+    }
+
+    private func clearNowPlayingInfo() {
+#if os(iOS)
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        lastNowPlayingUpdate = .distantPast
+        setRemoteCommandsEnabled(false)
+#endif
     }
 }
 
