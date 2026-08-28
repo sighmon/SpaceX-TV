@@ -1,9 +1,82 @@
 import SwiftUI
 import UIKit
 
+struct TelevisionDisplayMetrics: Equatable {
+    var isEnabled = false
+    var scale: CGFloat = 1
+
+    func scaled(_ value: CGFloat) -> CGFloat {
+        isEnabled ? value * scale : value
+    }
+}
+
+private struct TelevisionDisplayMetricsKey: EnvironmentKey {
+    static let defaultValue = TelevisionDisplayMetrics()
+}
+
+extension EnvironmentValues {
+    var televisionDisplayMetrics: TelevisionDisplayMetrics {
+        get { self[TelevisionDisplayMetricsKey.self] }
+        set { self[TelevisionDisplayMetricsKey.self] = newValue }
+    }
+}
+
+enum TelevisionTextStyle {
+    case title1
+    case title2
+    case title3
+    case headline
+    case callout
+    case body
+    case caption
+    case caption2
+
+    var pointSize: CGFloat {
+        switch self {
+        case .title1: 76
+        case .title2: 57
+        case .title3: 48
+        case .headline: 38
+        case .callout: 31
+        case .body: 29
+        case .caption: 25
+        case .caption2: 23
+        }
+    }
+}
+
+private struct TelevisionFontModifier: ViewModifier {
+    @Environment(\.televisionDisplayMetrics) private var metrics
+    let standard: Font
+    let style: TelevisionTextStyle
+    let weight: Font.Weight
+    let design: Font.Design
+
+    func body(content: Content) -> some View {
+        content.font(
+            metrics.isEnabled
+                ? .system(size: style.pointSize * metrics.scale, weight: weight, design: design)
+                : standard
+        )
+    }
+}
+
+extension View {
+    func televisionFont(
+        _ standard: Font,
+        style: TelevisionTextStyle,
+        weight: Font.Weight = .regular,
+        design: Font.Design = .default
+    ) -> some View {
+        modifier(TelevisionFontModifier(standard: standard, style: style, weight: weight, design: design))
+    }
+}
+
 struct RootView: View {
     @EnvironmentObject private var navigation: AppNavigationState
+    @Environment(\.controlSize) private var controlSize
     var isExternalDisplay = false
+    var externalDisplayScale: CGFloat = 1
 
     var body: some View {
         ZStack {
@@ -66,6 +139,14 @@ struct RootView: View {
 #if !os(tvOS)
         .animation(.easeInOut(duration: 0.28), value: navigation.selectedGallery?.id)
 #endif
+        .environment(
+            \.televisionDisplayMetrics,
+            TelevisionDisplayMetrics(
+                isEnabled: isExternalDisplay,
+                scale: isExternalDisplay ? externalDisplayScale : 1
+            )
+        )
+        .controlSize(isExternalDisplay ? .extraLarge : controlSize)
     }
 }
 

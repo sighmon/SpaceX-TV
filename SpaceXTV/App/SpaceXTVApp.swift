@@ -67,7 +67,14 @@ final class ExternalDisplaySceneDelegate: UIResponder, UIWindowSceneDelegate {
 
         let environment = AppEnvironment.shared
         environment.navigation.isExternalDisplayConnected = true
-        let rootView = RootView(isExternalDisplay: true)
+        let externalDisplayScale = min(
+            max(windowScene.screen.bounds.width / 1_920, 1),
+            2
+        )
+        let rootView = RootView(
+            isExternalDisplay: true,
+            externalDisplayScale: externalDisplayScale
+        )
             .environmentObject(environment.library)
             .environmentObject(environment.navigation)
             .environmentObject(environment.externalPlayback)

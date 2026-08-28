@@ -3,6 +3,7 @@ import SwiftUI
 struct BroadcastBrowserView: View {
     @EnvironmentObject private var library: BroadcastLibrary
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.televisionDisplayMetrics) private var televisionMetrics
     @Binding var selectedBroadcast: Broadcast?
     @Binding var selectedGallery: Broadcast?
     @Binding var selectedCollection: Broadcast?
@@ -19,11 +20,14 @@ struct BroadcastBrowserView: View {
     private let loadsNextLaunch: Bool
     private let spaceXLogoAspectRatio: CGFloat = 1
     private let compactHeaderControlHeight: CGFloat = 44
+    private var headerControlHeight: CGFloat {
+        if televisionMetrics.isEnabled { return televisionMetrics.scaled(76) }
 #if os(tvOS)
-    private let headerControlHeight: CGFloat = 76
+        return 76
 #else
-    private let headerControlHeight: CGFloat = 68
+        return 68
 #endif
+    }
 
     private enum CardFilter: String, CaseIterable, Identifiable, Hashable {
         case all
@@ -259,9 +263,9 @@ struct BroadcastBrowserView: View {
                 }
             }
 
-            Spacer(minLength: 32)
+            Spacer(minLength: televisionMetrics.scaled(32))
 
-            HStack(spacing: 14) {
+            HStack(spacing: televisionMetrics.scaled(14)) {
                 headerButton(systemImage: "gear", control: .settings) {
                     showsSettings = true
                 }
@@ -278,7 +282,7 @@ struct BroadcastBrowserView: View {
 
     @ViewBuilder
     private func filterBar(width: CGFloat) -> some View {
-        let chips = HStack(spacing: 14) {
+        let chips = HStack(spacing: televisionMetrics.scaled(14)) {
             ForEach(CardFilter.allCases) { filter in
                 filterChip(filter)
             }
@@ -311,16 +315,16 @@ struct BroadcastBrowserView: View {
 #if os(tvOS)
                 .font(.callout.weight(.semibold))
 #else
-                .font(.subheadline.weight(.semibold))
+                .televisionFont(.subheadline.weight(.semibold), style: .callout, weight: .semibold)
 #endif
                 .foregroundStyle(isHighlighted ? Color.black : Color.white.opacity(0.86))
-                .padding(.horizontal, 16)
+                .padding(.horizontal, televisionMetrics.scaled(16))
                 .frame(
                     height: horizontalSizeClass == .compact
                         ? compactHeaderControlHeight
                         : nil
                 )
-                .padding(.vertical, horizontalSizeClass == .compact ? 0 : 10)
+                .padding(.vertical, horizontalSizeClass == .compact ? 0 : televisionMetrics.scaled(10))
                 .background(
                     chipBackground(isSelected: isSelected, isFocused: isFocused),
                     in: Capsule()
@@ -367,9 +371,12 @@ struct BroadcastBrowserView: View {
 #if os(tvOS)
                     .font(.system(size: 38, weight: .semibold))
 #else
-                    .font(.system(size: 30, weight: .semibold))
+                    .font(.system(size: televisionMetrics.isEnabled ? televisionMetrics.scaled(38) : 30, weight: .semibold))
 #endif
-                    .frame(width: 58, height: 58)
+                    .frame(
+                        width: televisionMetrics.scaled(58),
+                        height: televisionMetrics.scaled(58)
+                    )
                     .contentShape(Rectangle())
             }
             .buttonStyle(.bordered)
@@ -389,17 +396,17 @@ struct BroadcastBrowserView: View {
             HStack(spacing: 12) {
                 ProgressView()
                 Text("Loading next launch...")
-                    .font(.callout.weight(.semibold))
+                    .televisionFont(.callout.weight(.semibold), style: .callout, weight: .semibold)
                     .foregroundStyle(.white.opacity(0.74))
             }
-            .padding(.horizontal, 18)
-            .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+            .padding(.horizontal, televisionMetrics.scaled(18))
+            .frame(maxWidth: .infinity, minHeight: televisionMetrics.scaled(72), alignment: .leading)
         } else if let nextLaunchError {
             Label(nextLaunchError, systemImage: "clock.badge.exclamationmark")
-                .font(.callout.weight(.semibold))
+                .televisionFont(.callout.weight(.semibold), style: .callout, weight: .semibold)
                 .foregroundStyle(.white.opacity(0.74))
-                .padding(.horizontal, 18)
-                .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+                .padding(.horizontal, televisionMetrics.scaled(18))
+                .frame(maxWidth: .infinity, minHeight: televisionMetrics.scaled(72), alignment: .leading)
                 .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
         }
     }
@@ -468,36 +475,36 @@ struct BroadcastBrowserView: View {
         switch library.loadingState {
         case .idle, .loading:
             ProgressView("Finding recent broadcasts...")
-                .font(.title2)
-                .frame(maxWidth: .infinity, minHeight: 260, alignment: .center)
+                .televisionFont(.title2, style: .title2, weight: .medium)
+                .frame(maxWidth: .infinity, minHeight: televisionMetrics.scaled(260), alignment: .center)
         case .loaded:
             broadcastGrid(width: width)
         case .failed(let message):
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: televisionMetrics.scaled(20)) {
                 Label("Broadcasts unavailable", systemImage: "exclamationmark.triangle")
-                    .font(.title2.weight(.semibold))
+                    .televisionFont(.title2.weight(.semibold), style: .title2, weight: .semibold)
                 Text(message)
-                    .font(.body)
+                    .televisionFont(.body, style: .body, weight: .medium)
                     .foregroundStyle(.secondary)
                 DebugLogView(lines: library.debugLines)
-                HStack(spacing: 16) {
+                HStack(spacing: televisionMetrics.scaled(16)) {
                     Button {
                         Task { await library.refresh() }
                     } label: {
                         Label("Refresh", systemImage: "arrow.clockwise")
-                            .font(.title3.weight(.semibold))
+                            .televisionFont(.title3.weight(.semibold), style: .title3, weight: .semibold)
                     }
                     if !library.hasXAPIBearerToken {
                         Button {
                             showsSettings = true
                         } label: {
                             Label("Add Token", systemImage: "key.fill")
-                                .font(.title3.weight(.semibold))
+                                .televisionFont(.title3.weight(.semibold), style: .title3, weight: .semibold)
                         }
                     }
                 }
             }
-            .padding(28)
+            .padding(televisionMetrics.scaled(28))
             .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
         }
     }
@@ -570,11 +577,11 @@ struct BroadcastBrowserView: View {
             detail = "No broadcasts available"
         }
 
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: televisionMetrics.scaled(12)) {
             Label(isFilterActive ? "No matches" : "Nothing here yet", systemImage: "line.3.horizontal.decrease.circle")
-                .font(.title2.weight(.semibold))
+                .televisionFont(.title2.weight(.semibold), style: .title2, weight: .semibold)
             Text(detail)
-                .font(.body)
+                .televisionFont(.body, style: .body, weight: .medium)
                 .foregroundStyle(.secondary)
             if isFilterActive {
                 Button("Show All") {
@@ -584,7 +591,7 @@ struct BroadcastBrowserView: View {
                 .focused($focusedHeaderControl, equals: .showAll)
             }
         }
-        .padding(28)
+        .padding(televisionMetrics.scaled(28))
         .frame(width: width, alignment: .leading)
         .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
     }
@@ -633,18 +640,18 @@ struct BroadcastBrowserView: View {
         Button {
             Task { await library.loadMore() }
         } label: {
-            HStack(spacing: 14) {
+            HStack(spacing: televisionMetrics.scaled(14)) {
                 if library.isLoadingMore {
                     ProgressView()
                 } else {
                     Image(systemName: "plus")
-                        .font(.title3.weight(.semibold))
+                        .televisionFont(.title3.weight(.semibold), style: .title3, weight: .semibold)
                 }
                 Text(library.isLoadingMore ? "Loading more broadcasts..." : "Load More")
-                    .font(.title3.weight(.semibold))
+                    .televisionFont(.title3.weight(.semibold), style: .title3, weight: .semibold)
             }
             .frame(width: width)
-            .frame(minHeight: 86)
+            .frame(minHeight: televisionMetrics.scaled(86))
         }
         .buttonStyle(.bordered)
         .focused($focusedHeaderControl, equals: .loadMore)
@@ -656,9 +663,9 @@ struct BroadcastBrowserView: View {
         width: CGFloat,
         showsDivider: Bool = true
     ) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: televisionMetrics.scaled(14)) {
             Text(title)
-                .font(.headline.weight(.bold))
+                .televisionFont(.headline.weight(.bold), style: .headline, weight: .bold)
                 .foregroundStyle(.white.opacity(0.72))
 
             if showsDivider {
@@ -670,7 +677,7 @@ struct BroadcastBrowserView: View {
     }
 
     private func homeFooter(width: CGFloat) -> some View {
-        VStack(spacing: 18) {
+        VStack(spacing: televisionMetrics.scaled(18)) {
             if library.showsSpaceXLogos {
                 Image("SpaceX")
                     .renderingMode(.template)
@@ -679,7 +686,7 @@ struct BroadcastBrowserView: View {
                     .foregroundStyle(.white.opacity(0.72))
                     .frame(width: footerLogoWidth(for: width))
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.leading, 50)
+                    .padding(.leading, televisionMetrics.scaled(50))
                     .opacity(0.58)
             }
 
@@ -694,32 +701,37 @@ struct BroadcastBrowserView: View {
                 }
             } label: {
                 Text("ONLY THE PARANOID SURVIVE")
-                    .font(.title2.weight(.bold))
-                    .tracking(2.4)
+                    .televisionFont(.title2.weight(.bold), style: .title2, weight: .bold)
+                    .tracking(televisionMetrics.scaled(2.4))
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.white.opacity(0.58))
                     .frame(width: width, alignment: .center)
-                    .padding(.top, 10)
+                    .padding(.top, televisionMetrics.scaled(10))
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
             Text(cacheFooterText)
-                .font(.caption.weight(.semibold))
-                .tracking(0.8)
+                .televisionFont(.caption.weight(.semibold), style: .caption, weight: .semibold)
+                .tracking(televisionMetrics.scaled(0.8))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.white.opacity(0.46))
                 .frame(width: width, alignment: .center)
-                .padding(.top, 8)
+                .padding(.top, televisionMetrics.scaled(8))
 
-            HStack(spacing: 5) {
+            HStack(spacing: televisionMetrics.scaled(5)) {
                 Text("T+")
                     .foregroundStyle(.white.opacity(0.38))
 
                 Text(formattedViewingTime)
                     .foregroundStyle(.white.opacity(0.68))
             }
-                .font(.caption.weight(.bold).monospacedDigit())
+                .televisionFont(
+                    .caption.weight(.bold).monospacedDigit(),
+                    style: .caption,
+                    weight: .bold,
+                    design: .monospaced
+                )
                 .frame(width: width, alignment: .center)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("Time watched \(formattedViewingTime)")
@@ -749,16 +761,19 @@ struct BroadcastBrowserView: View {
     }
 
     private func horizontalPadding(for width: CGFloat) -> CGFloat {
+        if televisionMetrics.isEnabled { return televisionMetrics.scaled(84) }
         if horizontalSizeClass == .compact { return 24 }
         return width < 900 ? 36 : 84
     }
 
     private func verticalPadding(for width: CGFloat) -> CGFloat {
-        width < 900 ? 28 : 54
+        if televisionMetrics.isEnabled { return televisionMetrics.scaled(54) }
+        return width < 900 ? 28 : 54
     }
 
     private func verticalSpacing(for width: CGFloat) -> CGFloat {
-        width < 900 ? 28 : 42
+        if televisionMetrics.isEnabled { return televisionMetrics.scaled(42) }
+        return width < 900 ? 28 : 42
     }
 
     private func headerBottomSpacing(for width: CGFloat) -> CGFloat {
@@ -770,19 +785,25 @@ struct BroadcastBrowserView: View {
     }
 
     private func footerTopSpacing(for width: CGFloat) -> CGFloat {
-        width < 900 ? 42 : 64
+        if televisionMetrics.isEnabled { return televisionMetrics.scaled(64) }
+        return width < 900 ? 42 : 64
     }
 
     private func gridSpacing(for width: CGFloat) -> CGFloat {
-        width < 900 ? 32 : 56
+        if televisionMetrics.isEnabled { return televisionMetrics.scaled(56) }
+        return width < 900 ? 32 : 56
     }
 
     private func gridColumnCount(for width: CGFloat) -> Int {
-        horizontalSizeClass == .regular && width >= 620 ? 2 : 1
+        if televisionMetrics.isEnabled {
+            return width >= televisionMetrics.scaled(620) ? 2 : 1
+        }
+        return horizontalSizeClass == .regular && width >= 620 ? 2 : 1
     }
 
     private func logoWidth(for width: CGFloat) -> CGFloat {
-        width < 700 ? 112 : 140
+        if televisionMetrics.isEnabled { return televisionMetrics.scaled(140) }
+        return width < 700 ? 112 : 140
     }
 
     private func logoHeight(for width: CGFloat) -> CGFloat {
@@ -790,13 +811,19 @@ struct BroadcastBrowserView: View {
     }
 
     private func footerLogoWidth(for width: CGFloat) -> CGFloat {
-        width < 700 ? 88 : 108
+        if televisionMetrics.isEnabled { return televisionMetrics.scaled(108) }
+        return width < 700 ? 88 : 108
     }
 }
 
 private struct NextLaunchCountdownView: View {
+    @Environment(\.televisionDisplayMetrics) private var televisionMetrics
     var launch: NextLaunch
     var width: CGFloat
+
+    private var usesCompactLayout: Bool {
+        width < televisionMetrics.scaled(760)
+    }
 
     private var dateFormatter: DateFormatter {
         let formatter = DateFormatter()
@@ -810,13 +837,13 @@ private struct NextLaunchCountdownView: View {
             let remaining = CountdownRemaining(from: context.date, to: launch.launchDate)
 
             Group {
-                if width < 760 {
-                    VStack(alignment: .leading, spacing: 18) {
+                if usesCompactLayout {
+                    VStack(alignment: .leading, spacing: televisionMetrics.scaled(18)) {
                         launchSummary
                         countdownUnits(for: remaining)
                     }
                 } else {
-                    HStack(alignment: .bottom, spacing: 28) {
+                    HStack(alignment: .bottom, spacing: televisionMetrics.scaled(28)) {
                         launchSummary
                         countdownUnits(for: remaining)
                     }
@@ -827,13 +854,17 @@ private struct NextLaunchCountdownView: View {
     }
 
     private var launchSummary: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: televisionMetrics.scaled(7)) {
             Text("NEXT LAUNCH")
-                .font(.caption.weight(.bold))
+                .televisionFont(.caption.weight(.bold), style: .caption, weight: .bold)
                 .foregroundStyle(.white.opacity(0.58))
 
             Text(launch.title)
-                .font((width < 760 ? Font.title3 : Font.title2).weight(.semibold))
+                .televisionFont(
+                    (usesCompactLayout ? Font.title3 : Font.title2).weight(.semibold),
+                    style: usesCompactLayout ? .title3 : .title2,
+                    weight: .semibold
+                )
                 .foregroundStyle(.white)
                 .lineLimit(2)
 
@@ -854,42 +885,51 @@ private struct NextLaunchCountdownView: View {
         }
         .fixedSize(horizontal: true, vertical: false)
         .layoutPriority(1)
-        .padding(.leading, width < 760 ? -countdownLeadingCorrection : 0)
-        .padding(.trailing, width < 760 ? 0 : -countdownTrailingCorrection)
-        .frame(maxWidth: width < 760 ? .infinity : nil, alignment: width < 760 ? .leading : .trailing)
+        .padding(.leading, usesCompactLayout ? -countdownLeadingCorrection : 0)
+        .padding(.trailing, usesCompactLayout ? 0 : -countdownTrailingCorrection)
+        .frame(maxWidth: usesCompactLayout ? .infinity : nil, alignment: usesCompactLayout ? .leading : .trailing)
         .accessibilityLabel(remaining.accessibilityText)
     }
 
     private var countdownFont: Font {
-        (width < 760 ? Font.title3 : Font.title2).weight(.semibold).monospacedDigit()
+        if televisionMetrics.isEnabled {
+            let size = usesCompactLayout ? TelevisionTextStyle.title3.pointSize : TelevisionTextStyle.title2.pointSize
+            return .system(size: size * televisionMetrics.scale, weight: .semibold, design: .monospaced)
+        }
+        return (usesCompactLayout ? Font.title3 : Font.title2).weight(.semibold).monospacedDigit()
     }
 
     private var countdownUnitWidth: CGFloat {
+        if televisionMetrics.isEnabled {
+            return televisionMetrics.scaled(usesCompactLayout ? 70 : 82)
+        }
 #if os(tvOS)
-        width < 760 ? 70 : 82
+        return usesCompactLayout ? 70 : 82
 #else
-        width < 420 ? 44 : 54
+        return width < 420 ? 44 : 54
 #endif
     }
 
     private var countdownTrailingCorrection: CGFloat {
+        if televisionMetrics.isEnabled { return 0 }
 #if os(tvOS)
-        0
+        return 0
 #else
-        12
+        return 12
 #endif
     }
 
     private var countdownLeadingCorrection: CGFloat {
+        if televisionMetrics.isEnabled { return 0 }
 #if os(tvOS)
-        0
+        return 0
 #else
-        width < 420 ? 8 : 13
+        return width < 420 ? 8 : 13
 #endif
     }
 
     private var launchMetadata: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: televisionMetrics.scaled(10)) {
             if let vehicle = launch.vehicle, !vehicle.isEmpty {
                 Text(vehicle)
             }
@@ -898,20 +938,21 @@ private struct NextLaunchCountdownView: View {
             }
             Text(dateFormatter.string(from: launch.launchDate))
         }
-        .font(.caption.weight(.medium))
+        .televisionFont(.caption.weight(.medium), style: .caption, weight: .medium)
         .foregroundStyle(.white.opacity(0.66))
         .lineLimit(2)
     }
 }
 
 private struct CountdownUnit: View {
+    @Environment(\.televisionDisplayMetrics) private var televisionMetrics
     var value: Int
     var label: String
     var font: Font
     var width: CGFloat
 
     var body: some View {
-        VStack(spacing: 5) {
+        VStack(spacing: televisionMetrics.scaled(5)) {
             Text(String(format: "%02d", value))
                 .font(font)
                 .foregroundStyle(.white)
@@ -923,7 +964,7 @@ private struct CountdownUnit: View {
                 .frame(width: width, alignment: .center)
 
             Text(label)
-                .font(.caption2.weight(.bold))
+                .televisionFont(.caption2.weight(.bold), style: .caption2, weight: .bold)
                 .foregroundStyle(.white.opacity(0.54))
         }
         .frame(width: width)
@@ -931,10 +972,11 @@ private struct CountdownUnit: View {
 }
 
 private struct CountdownSeparator: View {
+    @Environment(\.televisionDisplayMetrics) private var televisionMetrics
     var font: Font
 
     var body: some View {
-        VStack(spacing: 5) {
+        VStack(spacing: televisionMetrics.scaled(5)) {
             Text(":")
                 .font(font)
                 .foregroundStyle(.white.opacity(0.46))
@@ -942,7 +984,7 @@ private struct CountdownSeparator: View {
                 .fixedSize(horizontal: true, vertical: false)
 
             Text(" ")
-                .font(.caption2.weight(.bold))
+                .televisionFont(.caption2.weight(.bold), style: .caption2, weight: .bold)
                 .hidden()
         }
         .accessibilityHidden(true)
@@ -974,26 +1016,33 @@ private struct CountdownRemaining {
 }
 
 private struct DebugLogView: View {
+    @Environment(\.televisionDisplayMetrics) private var televisionMetrics
     var lines: [String]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: televisionMetrics.scaled(10)) {
             Text("Debug")
-                .font(.headline)
+                .televisionFont(.headline, style: .headline, weight: .medium)
             ForEach(Array(lines.suffix(18).enumerated()), id: \.offset) { _, line in
                 Text(line)
-                    .font(.caption.monospaced())
+                    .televisionFont(
+                        .caption.monospaced(),
+                        style: .caption,
+                        weight: .medium,
+                        design: .monospaced
+                    )
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
             }
         }
-        .padding(18)
+        .padding(televisionMetrics.scaled(18))
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
 struct BroadcastCard: View {
+    @Environment(\.televisionDisplayMetrics) private var televisionMetrics
     var broadcast: Broadcast
     var isFocused: Bool
     /// When set, overrides the usual title/tweet text in the card body.
@@ -1012,6 +1061,13 @@ struct BroadcastCard: View {
 
     static var shape: RoundedRectangle {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+    }
+
+    private var displayShape: RoundedRectangle {
+        RoundedRectangle(
+            cornerRadius: televisionMetrics.isEnabled ? televisionMetrics.scaled(32) : Self.cornerRadius,
+            style: .continuous
+        )
     }
 
     private let aspectRatio: CGFloat = 16.0 / 9.0
@@ -1042,25 +1098,25 @@ struct BroadcastCard: View {
             }
             .overlay(alignment: .bottomLeading) {
                 cardContent
-                    .padding(.leading, 24)
-                    .padding(.trailing, 24)
-                    .padding(.bottom, 24)
+                    .padding(.leading, televisionMetrics.scaled(24))
+                    .padding(.trailing, televisionMetrics.scaled(24))
+                    .padding(.bottom, televisionMetrics.scaled(24))
                     .frame(maxWidth: .infinity, alignment: .bottomLeading)
             }
             .overlay(alignment: .topTrailing) {
                 cardBadges
-                    .padding(14)
+                    .padding(televisionMetrics.scaled(14))
             }
             .frame(maxWidth: .infinity)
-            .clipShape(Self.shape)
-            .background(.white.opacity(isFocused ? 0.20 : 0.08), in: Self.shape)
+            .clipShape(displayShape)
+            .background(.white.opacity(isFocused ? 0.20 : 0.08), in: displayShape)
             .scaleEffect(isFocused ? 1.04 : 1)
             .animation(.easeOut(duration: 0.16), value: isFocused)
     }
 
     private var cardContent: some View {
-        HStack(alignment: .bottom, spacing: 14) {
-            VStack(alignment: .leading, spacing: 7) {
+        HStack(alignment: .bottom, spacing: televisionMetrics.scaled(14)) {
+            VStack(alignment: .leading, spacing: televisionMetrics.scaled(7)) {
                 if let titleOverride {
                     Text(titleOverride)
                         .font(primaryTextFont)
@@ -1088,7 +1144,7 @@ struct BroadcastCard: View {
             .frame(maxWidth: .infinity, alignment: .bottomLeading)
 
             Image(systemName: actionSymbolOverride ?? cardActionSymbol)
-                .font(.title3.weight(.bold))
+                .televisionFont(.title3.weight(.bold), style: .title3, weight: .bold)
                 .foregroundStyle(.white)
         }
     }
@@ -1105,34 +1161,37 @@ struct BroadcastCard: View {
     }
 
     private var primaryTextFont: Font {
-        .callout.weight(.semibold)
+        if televisionMetrics.isEnabled {
+            return .system(size: TelevisionTextStyle.callout.pointSize * televisionMetrics.scale, weight: .semibold)
+        }
+        return .callout.weight(.semibold)
     }
 
     @ViewBuilder
     private var cardBadges: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: televisionMetrics.scaled(8)) {
             if broadcast.isLive == true {
                 Text("LIVE")
-                    .font(.caption2.weight(.black))
+                    .televisionFont(.caption2.weight(.black), style: .caption2, weight: .black)
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, televisionMetrics.scaled(9))
+                    .padding(.vertical, televisionMetrics.scaled(5))
                     .background(Color.red, in: Capsule())
             } else if broadcast.isUpcoming {
                 Text("UPCOMING")
-                    .font(.caption2.weight(.black))
+                    .televisionFont(.caption2.weight(.black), style: .caption2, weight: .black)
                     .foregroundStyle(.black)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, televisionMetrics.scaled(9))
+                    .padding(.vertical, televisionMetrics.scaled(5))
                     .background(Color.gray, in: Capsule())
                     .accessibilityLabel("Upcoming")
             }
 
             if broadcast.sourceKind == .xBroadcast && broadcast.isPinned {
                 Image(systemName: "pin.fill")
-                    .font(.caption.weight(.bold))
+                    .televisionFont(.caption.weight(.bold), style: .caption, weight: .bold)
                     .foregroundStyle(.white)
-                    .frame(width: 26, height: 26)
+                    .frame(width: televisionMetrics.scaled(26), height: televisionMetrics.scaled(26))
                     .background(.black.opacity(0.56), in: Circle())
                     .accessibilityLabel("Pinned X post")
             }
@@ -1144,22 +1203,22 @@ struct BroadcastCard: View {
         if let metadataOverride {
             Text(metadataOverride)
                 .lineLimit(1)
-                .font(.caption2.weight(.medium))
+                .televisionFont(.caption2.weight(.medium), style: .caption2, weight: .medium)
                 .foregroundStyle(.gray.opacity(0.6))
         } else if let publishedAt = broadcast.publishedAt {
-            HStack(spacing: 10) {
+            HStack(spacing: televisionMetrics.scaled(10)) {
                 Text(dateFormatter.string(from: publishedAt))
                 if let summary = broadcast.mediaSummaryLabel {
                     Text(summary)
                 }
             }
             .lineLimit(1)
-            .font(.caption2.weight(.medium))
+            .televisionFont(.caption2.weight(.medium), style: .caption2, weight: .medium)
             .foregroundStyle(.gray.opacity(0.6))
         } else if let summary = broadcast.mediaSummaryLabel {
             Text(summary)
                 .lineLimit(1)
-                .font(.caption2.weight(.medium))
+                .televisionFont(.caption2.weight(.medium), style: .caption2, weight: .medium)
             .foregroundStyle(.gray.opacity(0.6))
         }
     }
@@ -1185,7 +1244,10 @@ struct BroadcastCard: View {
                 .resizable()
                 .scaledToFit()
                 .foregroundStyle(.white.opacity(0.72))
-                .frame(width: 180, height: 96)
+                .frame(
+                    width: televisionMetrics.scaled(180),
+                    height: televisionMetrics.scaled(96)
+                )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

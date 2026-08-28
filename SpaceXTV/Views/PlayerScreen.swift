@@ -584,6 +584,7 @@ struct PlayerScreen: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var library: BroadcastLibrary
     @EnvironmentObject private var externalPlayback: ExternalPlaybackController
+    @Environment(\.televisionDisplayMetrics) private var televisionMetrics
     @StateObject private var model: PlayerViewModel
     private let publishesExternalControls: Bool
     private let thumbnailURL: URL?
@@ -619,7 +620,7 @@ struct PlayerScreen: View {
             switch model.state {
             case .resolving:
                 ProgressView("Resolving stream...")
-                    .font(.title2)
+                    .televisionFont(.title2, style: .title2, weight: .medium)
                     .task {
                         await model.start()
                     }
@@ -699,7 +700,7 @@ struct PlayerScreen: View {
 
                     if library.showsPlayerDebugOverlay {
                         PlayerDebugOverlay(lines: model.debugLines)
-                            .padding(40)
+                            .padding(televisionMetrics.scaled(40))
                     }
                 }
                 // .navigationTitle(title)
@@ -714,7 +715,7 @@ struct PlayerScreen: View {
                         PlayerDebugOverlay(lines: model.debugLines)
                     }
                 }
-                .padding(60)
+                .padding(televisionMetrics.scaled(60))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -1591,21 +1592,27 @@ extension TVPlayerView.Coordinator: AVPlayerViewControllerDelegate {
 #endif
 
 private struct PlayerDebugOverlay: View {
+    @Environment(\.televisionDisplayMetrics) private var televisionMetrics
     var lines: [String]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Playback Debug")
-                .font(.headline)
+                .televisionFont(.headline, style: .headline, weight: .medium)
             ForEach(Array(lines.suffix(10).enumerated()), id: \.offset) { _, line in
                 Text(line)
-                    .font(.caption.monospaced())
+                    .televisionFont(
+                        .caption.monospaced(),
+                        style: .caption,
+                        weight: .medium,
+                        design: .monospaced
+                    )
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
             }
         }
-        .padding(18)
-        .frame(maxWidth: 1000, alignment: .leading)
+        .padding(televisionMetrics.scaled(18))
+        .frame(maxWidth: televisionMetrics.scaled(1000), alignment: .leading)
         .background(.black.opacity(0.62), in: RoundedRectangle(cornerRadius: 8))
     }
 }
