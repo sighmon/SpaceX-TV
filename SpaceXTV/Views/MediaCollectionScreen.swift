@@ -6,6 +6,10 @@ struct MediaCollectionScreen: View {
     @EnvironmentObject private var navigation: AppNavigationState
     var collection: Broadcast
 
+#if os(tvOS)
+    @State private var selectedBroadcast: Broadcast?
+    @State private var selectedGallery: Broadcast?
+#endif
     @FocusState private var focusedEntryID: String?
 
     private var entries: [MediaCollectionEntry] {
@@ -43,6 +47,26 @@ struct MediaCollectionScreen: View {
             .ignoresSafeArea(edges: .bottom)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationDestination(item: collectionBroadcastSelection) { broadcast in
+            BroadcastPlaybackDestination(broadcast: broadcast)
+        }
+#if os(tvOS)
+        .navigationDestination(item: $selectedGallery) { gallery in
+            GalleryScreen(gallery: gallery)
+        }
+#endif
+    }
+
+    private var collectionBroadcastSelection: Binding<Broadcast?> {
+#if os(tvOS)
+        $selectedBroadcast
+#else
+        if televisionMetrics.isEnabled {
+            .constant(nil)
+        } else {
+            $navigation.selectedBroadcast
+        }
+#endif
     }
 
     private var header: some View {
@@ -121,9 +145,17 @@ struct MediaCollectionScreen: View {
     private func select(_ entry: MediaCollectionEntry) {
         switch entry {
         case let .video(item, index, totalVideos):
-            navigation.selectedBroadcast = collection.videoBroadcast(for: item, index: index, totalVideos: totalVideos)
+            collectionBroadcastSelection.wrappedValue = collection.videoBroadcast(
+                for: item,
+                index: index,
+                totalVideos: totalVideos
+            )
         case let .photos(images):
+#if os(tvOS)
+            selectedGallery = collection.photoGalleryBroadcast(images: images)
+#else
             navigation.selectedGallery = collection.photoGalleryBroadcast(images: images)
+#endif
         }
     }
 

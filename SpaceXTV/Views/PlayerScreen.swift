@@ -587,6 +587,7 @@ struct PlayerScreen: View {
     @Environment(\.televisionDisplayMetrics) private var televisionMetrics
     @StateObject private var model: PlayerViewModel
     private let publishesExternalControls: Bool
+    private let onDismiss: (() -> Void)?
     private let thumbnailURL: URL?
     @State private var showsPlaybackBackButton = false
     @State private var isPlaybackPaused = false
@@ -601,8 +602,13 @@ struct PlayerScreen: View {
 #endif
     }
 
-    init(broadcast: Broadcast, publishesExternalControls: Bool = false) {
+    init(
+        broadcast: Broadcast,
+        publishesExternalControls: Bool = false,
+        onDismiss: (() -> Void)? = nil
+    ) {
         self.publishesExternalControls = publishesExternalControls
+        self.onDismiss = onDismiss
         self.thumbnailURL = broadcast.thumbnailURL
         _model = StateObject(wrappedValue: PlayerViewModel(broadcast: broadcast))
     }
@@ -610,6 +616,7 @@ struct PlayerScreen: View {
 #if DEBUG
     init(previewState: PlayerViewModel.State, broadcast: Broadcast) {
         self.publishesExternalControls = false
+        self.onDismiss = nil
         self.thumbnailURL = broadcast.thumbnailURL
         _model = StateObject(wrappedValue: PlayerViewModel(previewState: previewState, broadcast: broadcast))
     }
@@ -666,7 +673,7 @@ struct PlayerScreen: View {
                         },
                         onEnded: {
                             commitViewingTime()
-                            dismiss()
+                            close()
                         },
                         onKeepWaiting: {
                             model.keepWaitingForCurrentStream()
@@ -680,7 +687,7 @@ struct PlayerScreen: View {
                             }
                         },
                         onFullScreenDismissed: {
-                            dismiss()
+                            close()
                         }
                     ) { line in
                         model.appendPlayerDebug(line)
@@ -750,7 +757,7 @@ struct PlayerScreen: View {
 
     private var playbackBackButton: some View {
         Button {
-            dismiss()
+            close()
         } label: {
             Label("Back", systemImage: "chevron.backward")
                 .labelStyle(.iconOnly)
@@ -761,6 +768,14 @@ struct PlayerScreen: View {
         .buttonStyle(.plain)
         .foregroundStyle(.white)
         .accessibilityLabel("Back")
+    }
+
+    private func close() {
+        if let onDismiss {
+            onDismiss()
+        } else {
+            dismiss()
+        }
     }
 
     private func showPlaybackBackButton(autoHide: Bool = true) {
@@ -920,7 +935,10 @@ struct TVPlayerView: UIViewControllerRepresentable {
             controller.dismiss(animated: false)
         }
         if let player = controller.player {
-            coordinator.onPlayerChanged(player, false)
+            let onPlayerChanged = coordinator.onPlayerChanged
+            DispatchQueue.main.async {
+                onPlayerChanged(player, false)
+            }
         }
         coordinator.stop(controller.player)
         controller.player = nil

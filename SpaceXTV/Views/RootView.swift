@@ -88,28 +88,11 @@ struct RootView: View {
                     showsSettings: $navigation.showsSettings
                     )
                     .toolbar(.hidden, for: .navigationBar)
-                    .navigationDestination(item: $navigation.selectedBroadcast) { broadcast in
-#if os(tvOS)
-                        if broadcast.sourceKind == .youtube {
-                            YouTubeLaunchScreen(broadcast: broadcast)
-                        } else {
-                            PlayerScreen(broadcast: broadcast)
-                        }
-#else
-                        if broadcast.sourceKind == .youtube {
-                            if isExternalDisplay {
-                                Color.black.ignoresSafeArea()
-                            } else {
-                                YouTubeLaunchScreen(broadcast: broadcast)
-                            }
-                        } else if isExternalDisplay {
-                            PlayerScreen(broadcast: broadcast, publishesExternalControls: true)
-                        } else if navigation.isExternalDisplayConnected {
-                            ExternalPlaybackStatusView(broadcast: broadcast)
-                        } else {
-                            PlayerScreen(broadcast: broadcast)
-                        }
-#endif
+                    .navigationDestination(item: rootBroadcastSelection) { broadcast in
+                        BroadcastPlaybackDestination(
+                            broadcast: broadcast,
+                            isExternalDisplay: isExternalDisplay
+                        )
                     }
 #if os(tvOS)
                     .navigationDestination(item: $navigation.selectedGallery) { gallery in
@@ -124,6 +107,14 @@ struct RootView: View {
                     }
             }
             .id(isExternalDisplay ? navigation.externalPlaybackPresentationGeneration : 0)
+#if !os(tvOS)
+            .fullScreenCover(item: externalBroadcastSelection) { broadcast in
+                BroadcastPlaybackDestination(
+                    broadcast: broadcast,
+                    isExternalDisplay: true
+                )
+            }
+#endif
 #if !os(tvOS)
             if let selectedGallery = navigation.selectedGallery {
                 GalleryScreen(gallery: selectedGallery) {
@@ -148,10 +139,74 @@ struct RootView: View {
         )
         .controlSize(isExternalDisplay ? .extraLarge : controlSize)
     }
+
+    private var rootBroadcastSelection: Binding<Broadcast?> {
+        Binding(
+            get: {
+                if isExternalDisplay || navigation.selectedCollection != nil {
+                    return nil
+                }
+                return navigation.selectedBroadcast
+            },
+            set: { navigation.selectedBroadcast = $0 }
+        )
+    }
+
+#if !os(tvOS)
+    private var externalBroadcastSelection: Binding<Broadcast?> {
+        Binding(
+            get: {
+                guard isExternalDisplay else { return nil }
+                return navigation.selectedBroadcast
+            },
+            set: { broadcast in
+                guard isExternalDisplay else { return }
+                navigation.selectedBroadcast = broadcast
+            }
+        )
+    }
+#endif
+}
+
+struct BroadcastPlaybackDestination: View {
+    @EnvironmentObject private var navigation: AppNavigationState
+    let broadcast: Broadcast
+    var isExternalDisplay = false
+
+    @ViewBuilder
+    var body: some View {
+#if os(tvOS)
+        if broadcast.sourceKind == .youtube {
+            YouTubeLaunchScreen(broadcast: broadcast)
+        } else {
+            PlayerScreen(broadcast: broadcast)
+        }
+#else
+        if broadcast.sourceKind == .youtube {
+            if isExternalDisplay {
+                Color.black.ignoresSafeArea()
+            } else {
+                YouTubeLaunchScreen(broadcast: broadcast)
+            }
+        } else if isExternalDisplay {
+            PlayerScreen(
+                broadcast: broadcast,
+                publishesExternalControls: true,
+                onDismiss: {
+                    navigation.selectedBroadcast = nil
+                }
+            )
+        } else if navigation.isExternalDisplayConnected {
+            ExternalPlaybackStatusView(broadcast: broadcast)
+        } else {
+            PlayerScreen(broadcast: broadcast)
+        }
+#endif
+    }
 }
 
 #if !os(tvOS)
-private struct ExternalPlaybackStatusView: View {
+struct ExternalPlaybackStatusView: View {
     @EnvironmentObject private var playback: ExternalPlaybackController
     @EnvironmentObject private var navigation: AppNavigationState
     let broadcast: Broadcast
