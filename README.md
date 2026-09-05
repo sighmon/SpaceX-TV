@@ -1,23 +1,39 @@
 # SpaceX TV
 
-Native tvOS SwiftUI app for watching SpaceX broadcasts from X on Apple TV.
+Native SwiftUI app for watching SpaceX broadcasts and films on Apple TV, iPhone, and iPad.
 
-The app discovers recent SpaceX broadcast posts, shows them as selectable poster cards, resolves playable X/Periscope streams, and plays them with `AVPlayerViewController`.
+The app discovers recent SpaceX media, presents broadcasts, films, photos, and mixed-media posts as visual cards, and resolves playable X/Periscope streams at playback time. On iPhone and iPad, video can also play full-screen on a connected external display while the device becomes a dedicated playback controller.
+
+## Screenshots
+
+### Apple TV
 
 <img src="screenshots/screenshot-tv-1.png" width="30%" /> <img src="screenshots/screenshot-tv-2.png" width="30%" /> <img src="screenshots/screenshot-tv-3.png" width="30%" />
 <img src="screenshots/screenshot-tv-4.png" width="30%" /> <img src="screenshots/screenshot-tv-5.png" width="30%" />
 
+### iPad
+
 <img src="screenshots/screenshot-ipad-1.png" width="25%" /> <img src="screenshots/screenshot-ipad-2.png" width="25%" /> <img src="screenshots/screenshot-ipad-3.png" width="25%" />
+
+### iPhone
+
+<img src="screenshots/screenshot-iphone-1.png" width="20%" /> <img src="screenshots/screenshot-iphone-2.png" width="20%" />
 
 ## Features
 
+- Native layouts for Apple TV, iPhone, and iPad.
+- Full-screen external-display playback from iPhone and iPad, with play, pause, seek, and dismiss controls kept on the device.
+- Lock Screen and Control Center Now Playing support with title, progress, playback controls, and card artwork.
 - X API timeline discovery from a hosted daily cache by default, with an opt-in user-supplied [Bearer Token](https://docs.x.com/x-api/introduction) mode.
 - SpaceX Starship film discovery from the public `STARSHIP` media playlist on spacex.com.
 - Next-launch countdown loaded from the same SpaceX launches feeds used by [spacex.com/launches](https://www.spacex.com/launches).
-- Hosted X API cache fallback for users who have not configured their own Bearer Token.
+- Optional card filters for broadcasts, films, and Starship flight tests.
 - SpaceX pinned post discovery, including pinned posts that link to `x.com/i/broadcasts/...`.
-- Playback for live and ended broadcasts by resolving X web playback metadata at play time.
+- Playback for upcoming, live, and ended broadcasts by resolving X web playback metadata at play time.
 - Highest-quality stream selection from available HLS or MP4 variants.
+- Photo galleries and mixed-media collections containing multiple videos and photos.
+- Gallery-aware navigation that returns to the originating collection after viewing a video or photo.
+- Support for multiple overlapping live broadcasts.
 - First load uses 25 recent SpaceX posts and reposts, showing every playable result, with deeper post fetches when scrolling to the end.
 - Daily cache for API discovery responses so app relaunches do not always hit X again.
 - Full-width tvOS player with end-of-video actions for Back and Replay.
@@ -96,12 +112,18 @@ To refresh the cache near launch time, add a second cron job that runs every fiv
 
 ## Build
 
-Open `SpaceXTV.xcodeproj` in Xcode and run the `SpaceXTV` target on an Apple TV simulator or device.
+Open `SpaceXTV.xcodeproj` in Xcode and run the `SpaceXTV` target on an Apple TV, iPhone, or iPad simulator or device. The app requires tvOS 17 or iOS/iPadOS 17 and later.
 
-Command-line build:
+Command-line Apple TV build:
 
 ```sh
 xcodebuild -project SpaceXTV.xcodeproj -target SpaceXTV -sdk appletvsimulator build
+```
+
+Command-line iPhone/iPad build:
+
+```sh
+xcodebuild -project SpaceXTV.xcodeproj -target SpaceXTV -sdk iphonesimulator build
 ```
 
 ## Privacy policy
