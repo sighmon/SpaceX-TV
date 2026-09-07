@@ -2,10 +2,14 @@ import SwiftUI
 
 struct MediaCollectionScreen: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.televisionDisplayMetrics) private var televisionMetrics
+    @EnvironmentObject private var navigation: AppNavigationState
     var collection: Broadcast
 
+#if os(tvOS)
     @State private var selectedBroadcast: Broadcast?
     @State private var selectedGallery: Broadcast?
+#endif
     @FocusState private var focusedEntryID: String?
 
     private var entries: [MediaCollectionEntry] {
@@ -43,53 +47,51 @@ struct MediaCollectionScreen: View {
             .ignoresSafeArea(edges: .bottom)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationDestination(item: $selectedBroadcast) { broadcast in
-            PlayerScreen(broadcast: broadcast)
+        .navigationDestination(item: collectionBroadcastSelection) { broadcast in
+            BroadcastPlaybackDestination(broadcast: broadcast)
         }
 #if os(tvOS)
         .navigationDestination(item: $selectedGallery) { gallery in
             GalleryScreen(gallery: gallery)
         }
 #endif
-#if !os(tvOS)
-        .overlay {
-            if let selectedGallery {
-                GalleryScreen(gallery: selectedGallery) {
-                    withAnimation(.easeInOut(duration: 0.28)) {
-                        self.selectedGallery = nil
-                    }
-                }
-                .transition(.move(edge: .trailing))
-                .zIndex(1)
-            }
+    }
+
+    private var collectionBroadcastSelection: Binding<Broadcast?> {
+#if os(tvOS)
+        $selectedBroadcast
+#else
+        if televisionMetrics.isEnabled {
+            .constant(nil)
+        } else {
+            $navigation.selectedBroadcast
         }
-        .animation(.easeInOut(duration: 0.28), value: selectedGallery?.id)
 #endif
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: televisionMetrics.scaled(12)) {
             if let tweetText = collection.tweetText, !tweetText.isEmpty {
                 Text(displayText(from: tweetText))
-                    .font(.title2.weight(.semibold))
+                    .televisionFont(.title2.weight(.semibold), style: .title2, weight: .semibold)
                     .foregroundStyle(.white)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text(collection.title)
-                    .font(.title2.weight(.semibold))
+                    .televisionFont(.title2.weight(.semibold), style: .title2, weight: .semibold)
                     .foregroundStyle(.white)
             }
 
-            HStack(spacing: 12) {
+            HStack(spacing: televisionMetrics.scaled(12)) {
                 if let summary = collection.mediaSummaryLabel {
                     Text(summary)
-                        .font(.callout.weight(.semibold))
+                        .televisionFont(.callout.weight(.semibold), style: .callout, weight: .semibold)
                         .foregroundStyle(.white.opacity(0.72))
                 }
 
                 if let publishedAt = collection.publishedAt {
                     Text(publishedAt, format: .dateTime.month().day().year())
-                        .font(.callout.weight(.medium))
+                        .televisionFont(.callout.weight(.medium), style: .callout, weight: .medium)
                         .foregroundStyle(.white.opacity(0.48))
                 }
             }
@@ -143,33 +145,48 @@ struct MediaCollectionScreen: View {
     private func select(_ entry: MediaCollectionEntry) {
         switch entry {
         case let .video(item, index, totalVideos):
-            selectedBroadcast = collection.videoBroadcast(for: item, index: index, totalVideos: totalVideos)
+            collectionBroadcastSelection.wrappedValue = collection.videoBroadcast(
+                for: item,
+                index: index,
+                totalVideos: totalVideos
+            )
         case let .photos(images):
+#if os(tvOS)
             selectedGallery = collection.photoGalleryBroadcast(images: images)
+#else
+            navigation.selectedGallery = collection.photoGalleryBroadcast(images: images)
+#endif
         }
     }
 
     // MARK: - Layout (matches BroadcastBrowserView)
 
     private func horizontalPadding(for width: CGFloat) -> CGFloat {
+        if televisionMetrics.isEnabled { return televisionMetrics.scaled(84) }
         if horizontalSizeClass == .compact { return 24 }
         return width < 900 ? 36 : 84
     }
 
     private func verticalPadding(for width: CGFloat) -> CGFloat {
-        width < 900 ? 28 : 54
+        if televisionMetrics.isEnabled { return televisionMetrics.scaled(54) }
+        return width < 900 ? 28 : 54
     }
 
     private func verticalSpacing(for width: CGFloat) -> CGFloat {
-        width < 900 ? 28 : 42
+        if televisionMetrics.isEnabled { return televisionMetrics.scaled(42) }
+        return width < 900 ? 28 : 42
     }
 
     private func gridSpacing(for width: CGFloat) -> CGFloat {
-        width < 900 ? 32 : 56
+        if televisionMetrics.isEnabled { return televisionMetrics.scaled(56) }
+        return width < 900 ? 32 : 56
     }
 
     private func gridColumnCount(for width: CGFloat) -> Int {
-        horizontalSizeClass == .regular && width >= 620 ? 2 : 1
+        if televisionMetrics.isEnabled {
+            return width >= televisionMetrics.scaled(620) ? 2 : 1
+        }
+        return horizontalSizeClass == .regular && width >= 620 ? 2 : 1
     }
 
     private func displayText(from tweetText: String) -> String {

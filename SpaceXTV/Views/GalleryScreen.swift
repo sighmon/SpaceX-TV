@@ -19,8 +19,6 @@ struct GalleryScreen: View {
     @State private var slideshowTask: Task<Void, Never>?
     @State private var playbackIconHideTask: Task<Void, Never>?
 #else
-    @State private var showsBackButton = true
-    @State private var backButtonHideTask: Task<Void, Never>?
     @GestureState private var dismissDragOffset: CGFloat = 0
 #endif
 
@@ -64,25 +62,6 @@ struct GalleryScreen: View {
                     .background(.black.opacity(0.54), in: Circle())
                     .transition(.scale.combined(with: .opacity))
             }
-#else
-            if showsBackButton {
-                Button {
-                    close()
-                } label: {
-                    Label("Back", systemImage: "chevron.backward")
-                        .labelStyle(.iconOnly)
-                        .font(.system(size: 30, weight: .semibold))
-                        .frame(width: 64, height: 64)
-                        .background(.black.opacity(0.58), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white)
-                .accessibilityLabel("Back")
-                .padding(.top, 36)
-                .padding(.leading, 40)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .transition(.opacity)
-            }
 #endif
         }
 #if !os(tvOS)
@@ -99,9 +78,6 @@ struct GalleryScreen: View {
         .onAppear {
             selectedImageID = selectedImageID ?? gallery.galleryImages.first?.id
             startViewingIfNeeded()
-#if !os(tvOS)
-            showBackButtonTemporarily()
-#endif
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
@@ -151,18 +127,11 @@ struct GalleryScreen: View {
         }
 #else
         .contentShape(Rectangle())
-        .statusBarHidden(!showsBackButton)
-        .simultaneousGesture(
-            TapGesture().onEnded {
-                showBackButtonTemporarily()
-            }
-        )
+        .statusBarHidden(true)
         .simultaneousGesture(dismissDragGesture)
-        .animation(.easeOut(duration: 0.18), value: showsBackButton)
         .animation(.easeOut(duration: 0.18), value: dismissDragOffset)
         .onDisappear {
             commitViewingTime()
-            backButtonHideTask?.cancel()
         }
 #endif
     }
@@ -275,19 +244,6 @@ struct GalleryScreen: View {
         translation.height > 0 && translation.height > abs(translation.width) * 1.35
     }
 
-    private func showBackButtonTemporarily() {
-        showsBackButton = true
-        backButtonHideTask?.cancel()
-        backButtonHideTask = Task {
-            try? await Task.sleep(for: .seconds(3))
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                withAnimation(.easeOut(duration: 0.18)) {
-                    showsBackButton = false
-                }
-            }
-        }
-    }
 #endif
 
     private func close() {
