@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import SpaceXTV
 
 final class CardResolutionCacheTests: XCTestCase {
@@ -853,5 +854,73 @@ final class CardResolutionCacheTests: XCTestCase {
             originalPostID: postID,
             contentFingerprint: postID
         )
+    }
+}
+
+
+@MainActor
+final class GalleryImageStoreTests: XCTestCase {
+    func testWindowWrapsAndHandlesSmallGalleries() {
+        let urls = (0..<8).map { URL(string: "https://example.com/\($0).jpg")! }
+        XCTAssertEqual(GalleryImageStore.windowURLs(urls, around: 0), Set([urls[7], urls[0], urls[1], urls[2]]))
+        XCTAssertEqual(GalleryImageStore.windowURLs(Array(urls.prefix(1)), around: 0), [urls[0]])
+        XCTAssertTrue(GalleryImageStore.windowURLs([], around: 0).isEmpty)
+    }
+
+    func testPreparedImagesAreReusedAndDistantImagesEvicted() async {
+        let image = UIImage(systemName: "photo")!
+        let store = GalleryImageStore { _ in image }
+        let urls = (0..<8).map { URL(string: "https://example.com/\($0).jpg")! }
+        await store.prefetch(urls, around: 0)
+        XCTAssertEqual(Set(store.images.keys), Set([urls[7], urls[0], urls[1], urls[2]]))
+        let cached = await store.load(urls[0])
+        XCTAssertTrue(cached === image)
+        await store.prefetch(urls, around: 4)
+        XCTAssertEqual(Set(store.images.keys), Set([urls[3], urls[4], urls[5], urls[6]]))
+        store.cancelAll()
+        XCTAssertTrue(store.images.isEmpty)
+    }
+
+    func testFailureIsRecordedWithoutCachingAnImage() async {
+        let store = GalleryImageStore { _ in nil }
+        let url = URL(string: "https://example.com/failed.jpg")!
+        let result = await store.load(url)
+        XCTAssertNil(result)
+        XCTAssertTrue(store.failedURLs.contains(url))
+        XCTAssertTrue(store.images.isEmpty)
+    }
+
+    func testConcurrentLoadsShareRequestAndCancellationDoesNotRepopulateCache() async {
+        let gate = GalleryImageTestGate()
+        let store = GalleryImageStore { _ in await gate.fetch() }
+        let url = URL(string: "https://example.com/delayed.jpg")!
+        var started = 0
+        let first = Task { started += 1; return await store.load(url) }
+        let second = Task { started += 1; return await store.load(url) }
+        while started < 2 { await Task.yield() }
+        while await gate.count == 0 { await Task.yield() }
+        store.cancelAll()
+        await gate.finish()
+        _ = await first.value
+        _ = await second.value
+        let count = await gate.count
+        XCTAssertEqual(count, 1)
+        XCTAssertTrue(store.images.isEmpty)
+        XCTAssertTrue(store.failedURLs.isEmpty)
+    }
+}
+
+private actor GalleryImageTestGate {
+    private var continuation: CheckedContinuation<UIImage?, Never>?
+    private(set) var count = 0
+
+    func fetch() async -> UIImage? {
+        count += 1
+        return await withCheckedContinuation { continuation = $0 }
+    }
+
+    func finish() {
+        continuation?.resume(returning: UIImage(systemName: "photo"))
+        continuation = nil
     }
 }

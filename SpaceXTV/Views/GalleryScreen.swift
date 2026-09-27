@@ -1,7 +1,5 @@
 import SwiftUI
-#if !os(tvOS)
 import UIKit
-#endif
 
 struct GalleryScreen: View {
     @Environment(\.dismiss) private var dismiss
@@ -9,6 +7,8 @@ struct GalleryScreen: View {
     @EnvironmentObject private var library: BroadcastLibrary
     var gallery: Broadcast
     var onDismiss: (() -> Void)?
+    @StateObject private var imageStore = GalleryImageStore()
+    @State private var loadError = false
     @State private var selectedImageID: GalleryImage.ID?
     @State private var viewingStartedAt: Date?
 #if os(tvOS)
@@ -16,10 +16,13 @@ struct GalleryScreen: View {
     @State private var imageDisplayMode: GalleryImageDisplayMode = .fill
     @State private var showsPlaybackIcon = false
     @State private var showsCompletionOverlay = false
+    @State private var navigationTask: Task<Void, Never>?
     @State private var slideshowTask: Task<Void, Never>?
     @State private var playbackIconHideTask: Task<Void, Never>?
 #else
-    @GestureState private var dismissDragOffset: CGFloat = 0
+    @State private var dismissalState = GalleryDismissalState()
+    @GestureState private var dismissDrag = GalleryDismissDrag()
+    private var dismissDragOffset: CGFloat { dismissDrag.offset }
 #endif
 
     var body: some View {
@@ -37,10 +40,12 @@ struct GalleryScreen: View {
                 TabView(selection: $selectedImageID) {
                     ForEach(gallery.galleryImages) { image in
 #if os(tvOS)
-                        GalleryImagePage(image: image, displayMode: imageDisplayMode)
+                        GalleryImagePage(image: image, store: imageStore, displayMode: imageDisplayMode)
                             .tag(image.id as GalleryImage.ID?)
 #else
-                        GalleryImagePage(image: image)
+                        GalleryImagePage(image: image, store: imageStore, onDismissEligibilityChanged: { allowed in
+                            dismissalState.allowedByImage[image.id] = allowed
+                        })
                             .tag(image.id as GalleryImage.ID?)
 #endif
                     }
@@ -79,6 +84,15 @@ struct GalleryScreen: View {
             selectedImageID = selectedImageID ?? gallery.galleryImages.first?.id
             startViewingIfNeeded()
         }
+        .task(id: selectedImageID) {
+            guard !gallery.galleryImages.isEmpty else { return }
+            await imageStore.prefetch(gallery.galleryImages.map(\.url), around: selectedIndex)
+        }
+        .alert("Image could not be loaded", isPresented: $loadError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("The current image has been kept on screen. Try again when your connection is available.")
+        }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
                 startViewingIfNeeded()
@@ -110,6 +124,8 @@ struct GalleryScreen: View {
         .onDisappear {
             commitViewingTime()
             stopSlideshow()
+            navigationTask?.cancel()
+            imageStore.cancelAll()
             playbackIconHideTask?.cancel()
         }
         .fullScreenCover(isPresented: $showsCompletionOverlay) {
@@ -132,6 +148,7 @@ struct GalleryScreen: View {
         .animation(.easeOut(duration: 0.18), value: dismissDragOffset)
         .onDisappear {
             commitViewingTime()
+            imageStore.cancelAll()
         }
 #endif
     }
@@ -148,8 +165,21 @@ struct GalleryScreen: View {
     private func moveSelection(by offset: Int) {
         guard gallery.galleryImages.count > 1 else { return }
         let nextIndex = (selectedIndex + offset + gallery.galleryImages.count) % gallery.galleryImages.count
-        withAnimation(.easeOut(duration: 0.2)) {
-            selectedImageID = gallery.galleryImages[nextIndex].id
+        slideshowTask?.cancel()
+        navigationTask?.cancel()
+        navigationTask = Task { @MainActor in
+            let next = gallery.galleryImages[nextIndex]
+            let loaded = await imageStore.load(next.url)
+            guard !Task.isCancelled else { return }
+            guard loaded != nil else {
+                stopSlideshow()
+                loadError = true
+                return
+            }
+            withAnimation(.easeOut(duration: 0.2)) {
+                selectedImageID = next.id
+            }
+            if isSlideshowPlaying { startSlideshow() }
         }
     }
 
@@ -161,6 +191,7 @@ struct GalleryScreen: View {
 
     private func toggleSlideshow() {
         guard gallery.galleryImages.count > 1 else { return }
+        navigationTask?.cancel()
         isSlideshowPlaying ? stopSlideshow() : startSlideshow()
         showPlaybackIconTemporarily()
     }
@@ -168,13 +199,19 @@ struct GalleryScreen: View {
     private func startSlideshow() {
         isSlideshowPlaying = true
         slideshowTask?.cancel()
-        slideshowTask = Task {
+        slideshowTask = Task { @MainActor in
             while !Task.isCancelled {
+                let current = gallery.galleryImages[selectedIndex]
+                let loaded = await imageStore.load(current.url)
+                guard !Task.isCancelled else { return }
+                guard loaded != nil else {
+                    stopSlideshow()
+                    loadError = true
+                    return
+                }
                 try? await Task.sleep(for: .seconds(5))
                 guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    advanceSlideshow()
-                }
+                await advanceSlideshow()
             }
         }
     }
@@ -185,7 +222,8 @@ struct GalleryScreen: View {
         slideshowTask = nil
     }
 
-    private func advanceSlideshow() {
+    @MainActor
+    private func advanceSlideshow() async {
         guard gallery.galleryImages.count > 1 else { return }
         if selectedIndex >= gallery.galleryImages.count - 1 {
             stopSlideshow()
@@ -193,14 +231,23 @@ struct GalleryScreen: View {
             return
         }
 
+        let currentID = selectedImageID
+        let next = gallery.galleryImages[selectedIndex + 1]
+        let loaded = await imageStore.load(next.url)
+        guard !Task.isCancelled, selectedImageID == currentID else { return }
+        guard loaded != nil else {
+            stopSlideshow()
+            loadError = true
+            return
+        }
         withAnimation(.easeOut(duration: 0.2)) {
-            selectedImageID = gallery.galleryImages[selectedIndex + 1].id
+            selectedImageID = next.id
         }
     }
 
     private func replaySlideshow() {
-        selectedImageID = gallery.galleryImages.first?.id
-        startSlideshow()
+        isSlideshowPlaying = true
+        moveSelection(by: -selectedIndex)
     }
 
     private func showPlaybackIconTemporarily() {
@@ -227,17 +274,34 @@ struct GalleryScreen: View {
 #if !os(tvOS)
     private var dismissDragGesture: some Gesture {
         DragGesture(minimumDistance: 24, coordinateSpace: .global)
-            .updating($dismissDragOffset) { value, state, _ in
-                guard isDismissDrag(value.translation) else { return }
-                state = min(value.translation.height, 160)
+            .updating($dismissDrag) { value, state, _ in
+                // Decide once per drag: reaching the top must not turn a pan
+                // already in progress into an accidental dismissal.
+                if state.allowed == nil {
+                    state.allowed = canDismissSelectedImage
+                }
+                if !canDismissSelectedImage {
+                    state.allowed = false
+                    state.offset = 0
+                }
+                dismissalState.dragAllowed = state.allowed == true
+                guard state.allowed == true, isDismissDrag(value.translation) else { return }
+                state.offset = min(value.translation.height, 160)
             }
             .onEnded { value in
-                guard isDismissDrag(value.translation),
+                defer { dismissalState.dragAllowed = false }
+                guard dismissalState.dragAllowed, canDismissSelectedImage,
+                      isDismissDrag(value.translation),
                       value.translation.height > 120 || value.predictedEndTranslation.height > 220 else {
                     return
                 }
                 close()
             }
+    }
+
+    private var canDismissSelectedImage: Bool {
+        guard let selectedImageID else { return true }
+        return dismissalState.allowedByImage[selectedImageID] ?? true
     }
 
     private func isDismissDrag(_ translation: CGSize) -> Bool {
@@ -323,23 +387,20 @@ private enum GalleryImageDisplayMode {
 
 private struct GalleryImagePage: View {
     var image: GalleryImage
+    @ObservedObject var store: GalleryImageStore
 #if os(tvOS)
     var displayMode: GalleryImageDisplayMode
 
     var body: some View {
         GeometryReader { proxy in
-            AsyncImage(url: image.url, transaction: Transaction(animation: .easeOut(duration: 0.18))) { phase in
-                switch phase {
-                case .success(let loadedImage):
-                    loadedImageView(loadedImage, size: proxy.size)
-                case .failure:
+            Group {
+                if let loaded = store.images[image.url] {
+                    loadedImageView(Image(uiImage: loaded), size: proxy.size)
+                } else if store.failedURLs.contains(image.url) {
                     unavailable
                         .frame(width: proxy.size.width, height: proxy.size.height)
-                case .empty:
+                } else {
                     ProgressView()
-                        .frame(width: proxy.size.width, height: proxy.size.height)
-                @unknown default:
-                    unavailable
                         .frame(width: proxy.size.width, height: proxy.size.height)
                 }
             }
@@ -367,25 +428,67 @@ private struct GalleryImagePage: View {
         }
     }
 #else
+    var onDismissEligibilityChanged: (Bool) -> Void
+    @State private var sharedImage: SharedGalleryImage?
+
     var body: some View {
-        ZoomableRemoteImage(url: image.url)
-            .ignoresSafeArea()
-            .accessibilityLabel(image.altText ?? "SpaceX image")
+        Group {
+            if let loaded = store.images[image.url] {
+                ZoomableRemoteImage(image: loaded, onDismissEligibilityChanged: onDismissEligibilityChanged)
+                    .contextMenu {
+                        Button {
+                            sharedImage = SharedGalleryImage(image: loaded)
+                        } label: {
+                            Label("Share or Save Image…", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                    .accessibilityAction(named: "Share or Save Image") {
+                        sharedImage = SharedGalleryImage(image: loaded)
+                    }
+            } else if store.failedURLs.contains(image.url) {
+                unavailable
+            } else {
+                ProgressView()
+            }
+        }
+        .ignoresSafeArea()
+        .accessibilityLabel(image.altText ?? "SpaceX image")
+        .sheet(item: $sharedImage) { item in
+            GalleryShareSheet(image: item.image)
+        }
     }
 #endif
 
     private var unavailable: some View {
-        ContentUnavailableView(
-            "Image unavailable",
-            systemImage: "photo",
-            description: Text("The image could not be loaded.")
-        )
+        VStack {
+            ContentUnavailableView(
+                "Image unavailable",
+                systemImage: "photo",
+                description: Text("The image could not be loaded.")
+            )
+            Button("Retry") {
+                Task { _ = await store.load(image.url) }
+            }
+            .padding(.bottom, 40)
+        }
     }
 }
 
 #if !os(tvOS)
+private final class GalleryDismissalState {
+    // Kept outside GestureState because SwiftUI resets that state when a drag ends.
+    var dragAllowed = false
+    var allowedByImage: [GalleryImage.ID: Bool] = [:]
+}
+
+private struct GalleryDismissDrag {
+    var allowed: Bool?
+    var offset: CGFloat = 0
+}
+
 private struct ZoomableRemoteImage: UIViewRepresentable {
-    var url: URL
+    var image: UIImage
+    var onDismissEligibilityChanged: (Bool) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -428,22 +531,23 @@ private struct ZoomableRemoteImage: UIViewRepresentable {
         doubleTap.delegate = context.coordinator
         scrollView.addGestureRecognizer(doubleTap)
 
+        context.coordinator.onDismissEligibilityChanged = onDismissEligibilityChanged
         context.coordinator.scrollView = scrollView
         context.coordinator.imageView = imageView
         context.coordinator.doubleTapRecognizer = doubleTap
-        context.coordinator.loadImage(from: url)
+        context.coordinator.setImage(image)
 
         return scrollView
     }
 
     func updateUIView(_ scrollView: UIScrollView, context: Context) {
+        context.coordinator.onDismissEligibilityChanged = onDismissEligibilityChanged
         context.coordinator.scrollView = scrollView
-        context.coordinator.updateImageViewSize()
-        if context.coordinator.url != url {
+        if context.coordinator.imageView?.image !== image {
             scrollView.setZoomScale(1, animated: false)
             scrollView.contentOffset = .zero
             scrollView.panGestureRecognizer.isEnabled = false
-            context.coordinator.loadImage(from: url)
+            context.coordinator.setImage(image)
         }
     }
 
@@ -451,37 +555,45 @@ private struct ZoomableRemoteImage: UIViewRepresentable {
         weak var scrollView: UIScrollView?
         weak var imageView: UIImageView?
         weak var doubleTapRecognizer: UITapGestureRecognizer?
-        var url: URL?
-        private var imageTask: URLSessionDataTask?
+        var onDismissEligibilityChanged: ((Bool) -> Void)?
+        private var panStartedAwayFromTop = false
 
-        deinit {
-            imageTask?.cancel()
+        private func updateDismissEligibility(_ scrollView: UIScrollView) {
+            let zoomedOut = scrollView.zoomScale <= scrollView.minimumZoomScale + 0.01
+            let atTop = scrollView.contentOffset.y <= -scrollView.adjustedContentInset.top + 1
+            onDismissEligibilityChanged?(
+                !scrollView.isZooming && !panStartedAwayFromTop && (zoomedOut || atTop)
+            )
         }
 
-        func loadImage(from url: URL) {
-            guard self.url != url else { return }
-            self.url = url
-            imageTask?.cancel()
-            imageView?.image = nil
+        func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+            panStartedAwayFromTop = scrollView.zoomScale > scrollView.minimumZoomScale + 0.01
+                && scrollView.contentOffset.y > -scrollView.adjustedContentInset.top + 1
+            updateDismissEligibility(scrollView)
+        }
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            updateDismissEligibility(scrollView)
+        }
+
+        func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+            panStartedAwayFromTop = false
+            updateDismissEligibility(scrollView)
+        }
+
+        func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
+            onDismissEligibilityChanged?(false)
+        }
+
+        func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+            updateDismissEligibility(scrollView)
+        }
+
+        func setImage(_ image: UIImage) {
+            imageView?.image = image
+            scrollView?.setZoomScale(1, animated: false)
             updateImageViewSize()
-
-            imageTask = URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-                guard let self,
-                      self.url == url,
-                      let data,
-                      let image = UIImage(data: data) else {
-                    return
-                }
-
-                Task { @MainActor in
-                    guard self.url == url else { return }
-                    self.imageView?.image = image
-                    self.scrollView?.setZoomScale(1, animated: false)
-                    self.updateImageViewSize()
-                    self.centerImage()
-                }
-            }
-            imageTask?.resume()
+            centerImage()
         }
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? {
@@ -491,6 +603,7 @@ private struct ZoomableRemoteImage: UIViewRepresentable {
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
             scrollView.panGestureRecognizer.isEnabled = scrollView.zoomScale > scrollView.minimumZoomScale + 0.01
             centerImage()
+            updateDismissEligibility(scrollView)
         }
 
         @objc func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
@@ -596,6 +709,7 @@ private struct ZoomableRemoteImage: UIViewRepresentable {
 
             scrollView.contentInset = .zero
             imageView.setNeedsLayout()
+            updateDismissEligibility(scrollView)
         }
     }
 
@@ -611,5 +725,105 @@ private struct ZoomableRemoteImage: UIViewRepresentable {
             onBoundsSizeChanged?()
         }
     }
+}
+#endif
+
+// The same prepared images are used by prefetching and both gallery renderers.
+@MainActor
+final class GalleryImageStore: ObservableObject {
+    @Published private(set) var images: [URL: UIImage] = [:]
+    @Published private(set) var failedURLs: Set<URL> = []
+    private var requests: [URL: (id: UUID, task: Task<UIImage?, Never>)] = [:]
+
+    private let fetchImage: @Sendable (URL) async -> UIImage?
+
+    init(fetchImage: @escaping @Sendable (URL) async -> UIImage? = { await GalleryImageStore.downloadImage($0) }) {
+        self.fetchImage = fetchImage
+    }
+
+    func load(_ url: URL) async -> UIImage? {
+        guard !Task.isCancelled else { return nil }
+        if let image = images[url] { return image }
+        let request: (id: UUID, task: Task<UIImage?, Never>)
+        if let existing = requests[url] {
+            request = existing
+        } else {
+            let fetchImage = self.fetchImage
+            request = (UUID(), Task.detached(priority: .userInitiated) {
+                await fetchImage(url)
+            })
+            requests[url] = request
+        }
+        let image = await request.task.value
+        // A cancelled/evicted request must not repopulate the rolling cache.
+        if requests[url]?.id == request.id {
+            requests[url] = nil
+            if let image {
+                images[url] = image
+                failedURLs.remove(url)
+            } else {
+                failedURLs.insert(url)
+            }
+        }
+        return image
+    }
+
+    nonisolated private static func downloadImage(_ url: URL) async -> UIImage? {
+        do {
+            let (data, response) = try await URLSession.shared.data(for: URLRequest(url: url, timeoutInterval: 30))
+            try Task.checkCancellation()
+            guard let response = response as? HTTPURLResponse,
+                  (200..<300).contains(response.statusCode),
+                  let image = UIImage(data: data),
+                  let prepared = image.preparingForDisplay() else { return nil }
+            try Task.checkCancellation()
+            return prepared
+        } catch {
+            return nil
+        }
+    }
+
+    static func windowURLs(_ urls: [URL], around index: Int) -> Set<URL> {
+        guard urls.indices.contains(index) else { return [] }
+        return Set((-1...2).map { urls[(index + $0 + urls.count) % urls.count] })
+    }
+
+    func prefetch(_ urls: [URL], around index: Int) async {
+        guard !Task.isCancelled else { return }
+        let retained = Self.windowURLs(urls, around: index)
+        images = images.filter { retained.contains($0.key) }
+        failedURLs.formIntersection(retained)
+        for url in Array(requests.keys) where !retained.contains(url) {
+            requests.removeValue(forKey: url)?.task.cancel()
+        }
+        await withTaskGroup(of: Void.self) { group in
+            for url in retained {
+                group.addTask { _ = await self.load(url) }
+            }
+        }
+    }
+
+    func cancelAll() {
+        for request in requests.values { request.task.cancel() }
+        requests.removeAll()
+        images.removeAll()
+        failedURLs.removeAll()
+    }
+}
+
+#if !os(tvOS)
+private struct SharedGalleryImage: Identifiable {
+    let id = UUID()
+    let image: UIImage
+}
+
+private struct GalleryShareSheet: UIViewControllerRepresentable {
+    var image: UIImage
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [image], applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) { }
 }
 #endif
