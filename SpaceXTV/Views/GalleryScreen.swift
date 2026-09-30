@@ -12,6 +12,7 @@ struct GalleryScreen: View {
     @State private var selectedImageID: GalleryImage.ID?
     @State private var viewingStartedAt: Date?
 #if os(tvOS)
+    @State private var movesForward = true
     @State private var isSlideshowPlaying = false
     @State private var imageDisplayMode: GalleryImageDisplayMode = .fill
     @State private var showsPlaybackIcon = false
@@ -43,19 +44,23 @@ struct GalleryScreen: View {
                     description: Text("This post did not include image URLs.")
                 )
             } else {
+                Group {
+#if os(tvOS)
+                TelevisionGalleryPager(
+                    page: GalleryImagePage(
+                        image: gallery.galleryImages[selectedIndex],
+                        loadedImage: imageStore.images[gallery.galleryImages[selectedIndex].url],
+                        hasFailed: imageStore.failedURLs.contains(gallery.galleryImages[selectedIndex].url),
+                        store: imageStore,
+                        displayMode: imageDisplayMode
+                    ),
+                    index: selectedIndex,
+                    count: gallery.galleryImages.count,
+                    movesForward: movesForward
+                )
+#else
                 TabView(selection: $selectedImageID) {
                     ForEach(gallery.galleryImages) { image in
-#if os(tvOS)
-                        GalleryImagePage(
-                            image: image,
-                            loadedImage: imageStore.images[image.url],
-                            hasFailed: imageStore.failedURLs.contains(image.url),
-                            store: imageStore,
-                            displayMode: imageDisplayMode
-                        )
-                            .equatable()
-                            .tag(image.id as GalleryImage.ID?)
-#else
                         GalleryImagePage(
                             image: image,
                             loadedImage: imageStore.images[image.url],
@@ -67,14 +72,12 @@ struct GalleryScreen: View {
                         )
                             .equatable()
                             .tag(image.id as GalleryImage.ID?)
-#endif
                     }
                 }
-#if os(tvOS)
-                .tabViewStyle(.page(indexDisplayMode: .always))
-#else
                 .tabViewStyle(.page(indexDisplayMode: .automatic))
+                .animation(.default, value: selectedImageID)
 #endif
+                }
                 .ignoresSafeArea()
             }
 
@@ -195,9 +198,8 @@ struct GalleryScreen: View {
                 loadError = true
                 return
             }
-            withAnimation(.easeOut(duration: 0.2)) {
-                selectedImageID = next.id
-            }
+            movesForward = offset >= 0
+            selectedImageID = next.id
             if isSlideshowPlaying { startSlideshow() }
         }
     }
@@ -259,9 +261,8 @@ struct GalleryScreen: View {
             loadError = true
             return
         }
-        withAnimation(.easeOut(duration: 0.2)) {
-            selectedImageID = next.id
-        }
+        movesForward = true
+        selectedImageID = next.id
     }
 
     private func replaySlideshow() {
@@ -431,19 +432,20 @@ private struct GalleryImagePage: View, Equatable {
             Group {
                 if let loaded = loadedImage {
                     loadedImageView(Image(uiImage: loaded), size: proxy.size)
+                        .transition(.identity)
                 } else if hasFailed {
                     unavailable
+                        .transition(.identity)
                         .frame(width: proxy.size.width, height: proxy.size.height)
                 } else {
                     ProgressView()
+                        .transition(.identity)
                         .frame(width: proxy.size.width, height: proxy.size.height)
                 }
             }
         }
         .ignoresSafeArea()
         .accessibilityLabel(image.altText ?? "SpaceX image")
-        .animation(nil, value: loadedImage)
-        .animation(nil, value: hasFailed)
     }
 
     @ViewBuilder
@@ -472,6 +474,7 @@ private struct GalleryImagePage: View, Equatable {
         Group {
             if let loaded = loadedImage {
                 ZoomableRemoteImage(image: loaded, onDismissEligibilityChanged: onDismissEligibilityChanged)
+                    .transition(.identity)
                     .contextMenu {
                         Button {
                             sharedImage = SharedGalleryImage(image: loaded)
@@ -484,14 +487,14 @@ private struct GalleryImagePage: View, Equatable {
                     }
             } else if hasFailed {
                 unavailable
+                    .transition(.identity)
             } else {
                 ProgressView()
+                    .transition(.identity)
             }
         }
         .ignoresSafeArea()
         .accessibilityLabel(image.altText ?? "SpaceX image")
-        .animation(nil, value: loadedImage)
-        .animation(nil, value: hasFailed)
         .sheet(item: $sharedImage) { item in
             GalleryShareSheet(image: item.image)
         }
@@ -512,6 +515,79 @@ private struct GalleryImagePage: View, Equatable {
         }
     }
 }
+
+#if os(tvOS)
+/// Drive UIKit's native page animation explicitly; SwiftUI's tvOS TabView
+/// does not reliably animate programmatic selection changes.
+private struct TelevisionGalleryPager: UIViewControllerRepresentable {
+    var page: GalleryImagePage
+    var index: Int
+    var count: Int
+    var movesForward: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIViewController(context: Context) -> UIPageViewController {
+        let controller = UIPageViewController(transitionStyle: .scroll, navigationOrientation: .horizontal)
+        controller.view.backgroundColor = .black
+        let indicator = context.coordinator.indicator
+        indicator.isUserInteractionEnabled = false
+        indicator.translatesAutoresizingMaskIntoConstraints = false
+        controller.view.addSubview(indicator)
+        NSLayoutConstraint.activate([
+            indicator.centerXAnchor.constraint(equalTo: controller.view.centerXAnchor),
+            indicator.bottomAnchor.constraint(equalTo: controller.view.safeAreaLayoutGuide.bottomAnchor, constant: -20),
+        ])
+        // Remote commands remain owned by GalleryScreen, which waits for the
+        // destination image to be prepared before requesting a page change.
+        context.coordinator.controller = controller
+        return controller
+    }
+
+    func updateUIViewController(_ controller: UIPageViewController, context: Context) {
+        context.coordinator.pending = self
+        context.coordinator.render()
+    }
+
+    final class Coordinator {
+        weak var controller: UIPageViewController?
+        let indicator = UIPageControl()
+        var pending: TelevisionGalleryPager?
+        private var visible: UIHostingController<GalleryImagePage>?
+        private var isTransitioning = false
+
+        func render() {
+            guard !isTransitioning, let controller, let pending else { return }
+            indicator.numberOfPages = pending.count
+            indicator.currentPage = pending.index
+            if let visible, visible.rootView.image.id == pending.page.image.id {
+                // Neighboring cache loads must not reset the displayed page.
+                if visible.rootView != pending.page { visible.rootView = pending.page }
+                return
+            }
+
+            let next = UIHostingController(rootView: pending.page)
+            next.view.backgroundColor = .black
+            let animated = visible != nil && !pending.reduceMotion
+            isTransitioning = true
+            controller.setViewControllers(
+                [next],
+                direction: pending.movesForward ? .forward : .reverse,
+                animated: animated
+            ) { [weak self] _ in
+                guard let self else { return }
+                self.visible = next
+                self.isTransitioning = false
+                // Serialize fast remote commands instead of interrupting a
+                // UIKit transition. Only the latest requested page is needed.
+                self.render()
+            }
+            controller.view.bringSubviewToFront(indicator)
+        }
+    }
+}
+#endif
 
 #if !os(tvOS)
 private final class GalleryDismissalState {
