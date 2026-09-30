@@ -25,6 +25,12 @@ struct GalleryScreen: View {
     private var dismissDragOffset: CGFloat { dismissDrag.offset }
 #endif
 
+    init(gallery: Broadcast, onDismiss: (() -> Void)? = nil) {
+        self.gallery = gallery
+        self.onDismiss = onDismiss
+        _selectedImageID = State(initialValue: gallery.galleryImages.first?.id)
+    }
+
     var body: some View {
         ZStack {
             Color.black
@@ -40,12 +46,26 @@ struct GalleryScreen: View {
                 TabView(selection: $selectedImageID) {
                     ForEach(gallery.galleryImages) { image in
 #if os(tvOS)
-                        GalleryImagePage(image: image, store: imageStore, displayMode: imageDisplayMode)
+                        GalleryImagePage(
+                            image: image,
+                            loadedImage: imageStore.images[image.url],
+                            hasFailed: imageStore.failedURLs.contains(image.url),
+                            store: imageStore,
+                            displayMode: imageDisplayMode
+                        )
+                            .equatable()
                             .tag(image.id as GalleryImage.ID?)
 #else
-                        GalleryImagePage(image: image, store: imageStore, onDismissEligibilityChanged: { allowed in
-                            dismissalState.allowedByImage[image.id] = allowed
-                        })
+                        GalleryImagePage(
+                            image: image,
+                            loadedImage: imageStore.images[image.url],
+                            hasFailed: imageStore.failedURLs.contains(image.url),
+                            store: imageStore,
+                            onDismissEligibilityChanged: { allowed in
+                                dismissalState.allowedByImage[image.id] = allowed
+                            }
+                        )
+                            .equatable()
                             .tag(image.id as GalleryImage.ID?)
 #endif
                     }
@@ -81,7 +101,6 @@ struct GalleryScreen: View {
         .animation(.easeOut(duration: 0.18), value: showsPlaybackIcon)
 #endif
         .onAppear {
-            selectedImageID = selectedImageID ?? gallery.galleryImages.first?.id
             startViewingIfNeeded()
         }
         .task(id: selectedImageID) {
@@ -385,18 +404,34 @@ private enum GalleryImageDisplayMode {
 }
 #endif
 
-private struct GalleryImagePage: View {
+private struct GalleryImagePage: View, Equatable {
     var image: GalleryImage
-    @ObservedObject var store: GalleryImageStore
+    var loadedImage: UIImage?
+    var hasFailed: Bool
+    // Only the parent observes the shared cache. Unrelated downloads must not
+    // rebuild a page that is already displaying the same prepared image.
+    var store: GalleryImageStore
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        let sameImage = lhs.image == rhs.image
+            && lhs.loadedImage === rhs.loadedImage
+            && lhs.hasFailed == rhs.hasFailed
+            && lhs.store === rhs.store
+#if os(tvOS)
+        return sameImage && lhs.displayMode == rhs.displayMode
+#else
+        return sameImage
+#endif
+    }
 #if os(tvOS)
     var displayMode: GalleryImageDisplayMode
 
     var body: some View {
         GeometryReader { proxy in
             Group {
-                if let loaded = store.images[image.url] {
+                if let loaded = loadedImage {
                     loadedImageView(Image(uiImage: loaded), size: proxy.size)
-                } else if store.failedURLs.contains(image.url) {
+                } else if hasFailed {
                     unavailable
                         .frame(width: proxy.size.width, height: proxy.size.height)
                 } else {
@@ -407,6 +442,8 @@ private struct GalleryImagePage: View {
         }
         .ignoresSafeArea()
         .accessibilityLabel(image.altText ?? "SpaceX image")
+        .animation(nil, value: loadedImage)
+        .animation(nil, value: hasFailed)
     }
 
     @ViewBuilder
@@ -433,7 +470,7 @@ private struct GalleryImagePage: View {
 
     var body: some View {
         Group {
-            if let loaded = store.images[image.url] {
+            if let loaded = loadedImage {
                 ZoomableRemoteImage(image: loaded, onDismissEligibilityChanged: onDismissEligibilityChanged)
                     .contextMenu {
                         Button {
@@ -445,7 +482,7 @@ private struct GalleryImagePage: View {
                     .accessibilityAction(named: "Share or Save Image") {
                         sharedImage = SharedGalleryImage(image: loaded)
                     }
-            } else if store.failedURLs.contains(image.url) {
+            } else if hasFailed {
                 unavailable
             } else {
                 ProgressView()
@@ -453,6 +490,8 @@ private struct GalleryImagePage: View {
         }
         .ignoresSafeArea()
         .accessibilityLabel(image.altText ?? "SpaceX image")
+        .animation(nil, value: loadedImage)
+        .animation(nil, value: hasFailed)
         .sheet(item: $sharedImage) { item in
             GalleryShareSheet(image: item.image)
         }
