@@ -502,6 +502,108 @@ final class CardResolutionCacheTests: XCTestCase {
         XCTAssertTrue(urls.contains("https://abs.twimg.com/x-web/x-web/assets/other-chunk.js"))
     }
 
+    func testDiscoversBacktickDynamicImports() {
+        let entry = "const load=()=>import(`./assets/prefetch-tweet-result-by-rest-id-X9fhZGde.js`);"
+        let base = URL(string: "https://abs.twimg.com/x-web/x-web/entry-client-logged-out-Z7.js")!
+
+        let urls = BroadcastResolver().webScriptURLs(in: entry, baseURL: base).map(\.absoluteString)
+
+        XCTAssertTrue(urls.contains("https://abs.twimg.com/x-web/x-web/assets/prefetch-tweet-result-by-rest-id-X9fhZGde.js"))
+    }
+
+    func testPrioritizesStartupBundlesAheadOfIconChunks() {
+        let urls = [
+            "https://abs.twimg.com/x-web/x-web/assets/icon-at-aaa.js",
+            "https://abs.twimg.com/x-web/x-web/assets/startup-BKFmkUdL.js",
+            "https://abs.twimg.com/x-web/x-web/assets/startup-vendor-CViFHjoW.js",
+            "https://abs.twimg.com/x-web/x-web/assets/prefetch-tweet-result-by-rest-id-X9.js",
+            "https://abs.twimg.com/x-web/x-web/assets/guest-token-current.js",
+        ].compactMap(URL.init(string:))
+
+        let ordered = BroadcastResolver().prioritizeWebScripts(urls).map(\.lastPathComponent)
+
+        XCTAssertEqual(
+            ordered,
+            [
+                "guest-token-current.js",
+                "startup-BKFmkUdL.js",
+                "prefetch-tweet-result-by-rest-id-X9.js",
+                "icon-at-aaa.js",
+                "startup-vendor-CViFHjoW.js",
+            ]
+        )
+    }
+
+    func testLargeModuleDoesNotEnqueueEveryChunk() {
+        let discovered = [
+            URL(string: "https://abs.twimg.com/x-web/x-web/assets/startup-AAA.js")!,
+            URL(string: "https://abs.twimg.com/x-web/x-web/assets/prefetch-tweet-result-by-rest-id-BBB.js")!,
+        ] + (1 ... 40).compactMap { URL(string: "https://abs.twimg.com/x-web/x-web/assets/route-\($0).js") }
+
+        let queued = BroadcastResolver().nextWebScriptCandidates(discovered: discovered, queued: [], visited: [])
+
+        XCTAssertEqual(queued.first?.lastPathComponent, "startup-AAA.js")
+        XCTAssertEqual(queued.dropFirst().first?.lastPathComponent, "prefetch-tweet-result-by-rest-id-BBB.js")
+        XCTAssertLessThanOrEqual(queued.count, 7)
+    }
+
+    func testSmallModuleImportsJumpAheadOfTheBacklog() {
+        let discovered = [
+            URL(string: "https://abs.twimg.com/x-web/x-web/assets/retweet-BrJHInlQ.js")!,
+            URL(string: "https://abs.twimg.com/x-web/x-web/assets/startup-vendor-CViFHjoW.js")!,
+        ]
+        let backlog = (1 ... 30).compactMap { URL(string: "https://abs.twimg.com/x-web/x-web/assets/icon-\($0).js") }
+
+        let queued = BroadcastResolver().nextWebScriptCandidates(discovered: discovered, queued: backlog, visited: [])
+
+        XCTAssertEqual(queued.first?.lastPathComponent, "retweet-BrJHInlQ.js")
+    }
+
+    func testSmallModuleImportsStayBehindHigherPriorityQueuedScripts() {
+        let discovered = [
+            URL(string: "https://abs.twimg.com/x-web/x-web/assets/startup-vendor-CViFHjoW.js")!,
+            URL(string: "https://abs.twimg.com/x-web/x-web/assets/rolldown-runtime-TDXjjWaw.js")!,
+        ]
+        let queued = [
+            URL(string: "https://abs.twimg.com/x-web/x-web/assets/startup-dynamic-CPNaopl_.js")!,
+            URL(string: "https://abs.twimg.com/x-web/x-web/assets/icon-1.js")!,
+        ]
+
+        let names = BroadcastResolver()
+            .nextWebScriptCandidates(discovered: discovered, queued: queued, visited: [])
+            .map(\.lastPathComponent)
+
+        XCTAssertEqual(
+            names,
+            [
+                "startup-dynamic-CPNaopl_.js",
+                "rolldown-runtime-TDXjjWaw.js",
+                "startup-vendor-CViFHjoW.js",
+                "icon-1.js",
+            ]
+        )
+    }
+
+    func testStubTweetCardWithoutLegacyDecodesAsNoBindings() throws {
+        let json = Data("""
+        {"data":{"tweet_result_by_rest_id":{"result":{"card":{"id":"card-1"}}}}}
+        """.utf8)
+        let response = try JSONDecoder().decode(XTweetResultResponse.self, from: json)
+
+        XCTAssertNil(response.data.tweetResult.result.card?.legacy?.bindingValues)
+    }
+
+    func testTweetCardLegacyBindingsStillDecode() throws {
+        let json = Data("""
+        {"data":{"tweetResult":{"result":{"card":{"legacy":{"binding_values":[{"key":"broadcast_state","value":{"string_value":"NOT_STARTED"}}]}}}}}}
+        """.utf8)
+        let response = try JSONDecoder().decode(XTweetResultResponse.self, from: json)
+        let values = response.data.tweetResult.result.card?.legacy?.bindingValues
+
+        XCTAssertEqual(values?.first?.key, "broadcast_state")
+        XCTAssertEqual(values?.first?.value.stringValue, "NOT_STARTED")
+    }
+
     func testBareAssetsImportsFromAssetsModuleDoNotDoubleAssetsPath() {
         let resolver = BroadcastResolver()
         let underAssets = URL(string: "https://abs.twimg.com/x-web/x-web/assets/fetcher-kZhW7aEb.js")!

@@ -53,41 +53,14 @@ enum BroadcastResolverError: LocalizedError, Equatable {
 struct BroadcastResolver {
     var session: URLSession = .shared
 
-    private static let tweetResultFeatures: [String: Bool] = [
-        "creator_subscriptions_tweet_preview_api_enabled": true,
-        "premium_content_api_read_enabled": true,
-        "communities_web_enable_tweet_community_results_fetch": true,
-        "c9s_tweet_anatomy_moderator_badge_enabled": true,
-        "responsive_web_grok_analyze_button_fetch_trends_enabled": true,
-        "responsive_web_grok_analyze_post_followups_enabled": true,
-        "rweb_cashtags_composer_attachment_enabled": true,
-        "responsive_web_jetfuel_frame": true,
-        "responsive_web_grok_share_attachment_enabled": true,
-        "responsive_web_grok_annotations_enabled": true,
-        "articles_preview_enabled": true,
-        "responsive_web_edit_tweet_api_enabled": true,
-        "graphql_is_translatable_rweb_tweet_is_translatable_enabled": true,
-        "view_counts_everywhere_api_enabled": true,
-        "longform_notetweets_consumption_enabled": true,
-        "responsive_web_twitter_article_tweet_consumption_enabled": true,
-        "tweet_awards_web_tipping_enabled": false,
-        "responsive_web_grok_show_grok_translated_post": true,
-        "responsive_web_grok_analysis_button_from_backend": true,
-        "standardized_nudges_misinfo": true,
-        "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": true,
-        "longform_notetweets_rich_text_read_enabled": true,
-        "longform_notetweets_inline_media_enabled": true,
-        "responsive_web_grok_image_annotation_enabled": true,
-        "responsive_web_grok_imagine_annotation_enabled": true,
-        "responsive_web_grok_community_note_auto_translation_is_enabled": true,
-        "responsive_web_enhance_cards_enabled": true,
-    ]
-
-    private static let tweetResultFieldToggles: [String: Bool] = [
-        "withArticleRichContentState": true,
-        "withArticlePlainText": true,
-        "withGrokAnalyze": true,
-        "withDisallowedReplyControls": true,
+    /// Persisted TweetResultByRestId requires these Relay provider variables.
+    /// Omitting them returns GRAPHQL_VALIDATION_FAILED ("must be defined").
+    private static let tweetResultRelayVariables: [String: Bool] = [
+        "__relay_internal__pv__xclientsfeaturesappviewerisloggedinrelayprovider": false,
+        "__relay_internal__pv__xclientsfeaturestweetcomponentsgrokanalyzepostrelayprovider": false,
+        "__relay_internal__pv__xclientsfeaturestranslationnoteautotranslationenabledrelayprovider": false,
+        "__relay_internal__pv__xclientsfeaturestranslationgroktranslatedpostenabledrelayprovider": false,
+        "__relay_internal__pv__sportspostcontextenabledrelayprovider": false,
     ]
 
     func resolve(_ broadcast: Broadcast) async throws -> ResolvedBroadcast {
@@ -335,17 +308,7 @@ struct BroadcastResolver {
         }
         var components = URLComponents(string: "https://x.com/i/api/graphql/\(queryID)/TweetResultByRestId")!
         components.queryItems = [
-            URLQueryItem(
-                name: "variables",
-                value: jsonQueryValue([
-                    "tweetId": tweetID,
-                    "withCommunity": false,
-                    "includePromotedContent": false,
-                    "withVoice": false,
-                ])
-            ),
-            URLQueryItem(name: "features", value: jsonQueryValue(Self.tweetResultFeatures)),
-            URLQueryItem(name: "fieldToggles", value: jsonQueryValue(Self.tweetResultFieldToggles)),
+            URLQueryItem(name: "variables", value: jsonQueryValue(tweetResultVariables(tweetID: tweetID))),
         ]
 
         guard let url = components.url else {
@@ -355,7 +318,7 @@ struct BroadcastResolver {
         let request = xWebRequest(url: url, bearerToken: bearerToken, guestToken: guestToken)
         let data = try await xAPIData(for: request)
         let response = try JSONDecoder().decode(XTweetResultResponse.self, from: data)
-        guard let bindingValues = response.data.tweetResult.result.card?.legacy.bindingValues else {
+        guard let bindingValues = response.data.tweetResult.result.card?.legacy?.bindingValues else {
             throw BroadcastResolverError.missingStream
         }
 
@@ -411,9 +374,8 @@ struct BroadcastResolver {
         var bearerToken = webBearerToken(in: home)
         var tweetResultQueryID = tweetResultByRestIDQueryID(in: home)
 
-        // X's logged-out SPA only links an entry module; guest-token and other
-        // chunks are relative imports. Expand the module graph, then fetch in
-        // priority order (guest-token first).
+        // Fetch high-value modules first. A small module's imports jump the
+        // low-priority backlog, but not scripts already queued at a better priority.
         var candidates = webScriptURLs(in: home)
         var visited = Set<URL>()
         let maxFetches = 15
@@ -441,16 +403,7 @@ struct BroadcastResolver {
             }
 
             let discovered = webScriptURLs(in: script, baseURL: scriptURL)
-            guard !discovered.isEmpty else {
-                continue
-            }
-
-            var merged: [URL] = []
-            var seen = visited
-            for url in prioritizeWebScripts(discovered + candidates) where seen.insert(url).inserted {
-                merged.append(url)
-            }
-            candidates = merged
+            candidates = nextWebScriptCandidates(discovered: discovered, queued: candidates, visited: visited)
         }
 
         guard let bearerToken else {
@@ -498,7 +451,7 @@ struct BroadcastResolver {
         }
 
         if let baseURL {
-            let relativePattern = #"["']((?:\./|\.\./)?(?:assets/)?[^"'<>\s`]+\.js)["']"#
+            let relativePattern = #"["'`]((?:\./|\.\./)?(?:assets/)?[^"'<>\s`]+\.js)["'`]"#
             if let regex = try? NSRegularExpression(pattern: relativePattern) {
                 let range = NSRange(body.startIndex ..< body.endIndex, in: body)
                 for match in regex.matches(in: body, range: range) {
@@ -583,13 +536,83 @@ struct BroadcastResolver {
         if name.hasPrefix("guest-token-") {
             return 0
         }
-        if name.hasPrefix("main.") {
+        if name.hasPrefix("startup-"), !name.hasPrefix("startup-vendor") {
             return 1
         }
-        if name.hasPrefix("entry-") || name.contains("entry-client") {
+        if name.hasPrefix("main.") {
             return 2
         }
-        return 3
+        if name.hasPrefix("entry-") || name.contains("entry-client") {
+            return 3
+        }
+        if name.contains("prefetch-tweet-result") || name.contains("TweetResultByRestId") {
+            return 4
+        }
+        return 9
+    }
+
+    private func highValueWebScript(_ url: URL) -> Bool {
+        webScriptPriority(url) <= 4
+    }
+
+    /// Large bundles only contribute high-value URLs plus a short tail.
+    /// Small-module imports jump the low-priority backlog without passing
+    /// queued scripts that already have a better priority.
+    func nextWebScriptCandidates(discovered: [URL], queued: [URL], visited: Set<URL>) -> [URL] {
+        let fresh = discovered.filter { !visited.contains($0) }
+        let interesting = fresh.filter(highValueWebScript)
+        let rest = fresh.filter { !highValueWebScript($0) }
+
+        if fresh.count <= 8 {
+            let front = prioritizeWebScripts(fresh)
+            let frontSet = Set(front)
+            let back = queued.filter { !frontSet.contains($0) && !visited.contains($0) }
+            return mergeSmallModuleImports(front, aheadOf: back)
+        }
+
+        let tail = Array(prioritizeWebScripts(rest).prefix(5))
+        var seen = visited
+        var merged: [URL] = []
+        for url in prioritizeWebScripts(interesting + queued) where seen.insert(url).inserted {
+            merged.append(url)
+        }
+        for url in tail where seen.insert(url).inserted {
+            merged.append(url)
+        }
+        return merged
+    }
+
+    private func mergeSmallModuleImports(_ fresh: [URL], aheadOf queued: [URL]) -> [URL] {
+        var merged: [URL] = []
+        var freshIndex = 0
+        var queuedIndex = 0
+        while freshIndex < fresh.count || queuedIndex < queued.count {
+            if freshIndex == fresh.count {
+                merged.append(queued[queuedIndex])
+                queuedIndex += 1
+            } else if queuedIndex == queued.count {
+                merged.append(fresh[freshIndex])
+                freshIndex += 1
+            } else if webScriptPriority(queued[queuedIndex]) < webScriptPriority(fresh[freshIndex]) {
+                merged.append(queued[queuedIndex])
+                queuedIndex += 1
+            } else {
+                merged.append(fresh[freshIndex])
+                freshIndex += 1
+            }
+        }
+        return merged
+    }
+
+    private func tweetResultVariables(tweetID: String) -> [String: Any] {
+        var variables: [String: Any] = [
+            "restId": tweetID,
+            "withFocalTweet": true,
+        ]
+        for (key, value) in Self.tweetResultRelayVariables {
+            variables[key] = value
+        }
+        return variables
     }
 
     private func webBearerToken(in body: String) -> String? {
@@ -620,6 +643,9 @@ struct BroadcastResolver {
             in: body
         ) ?? firstMatch(
             pattern: #"operationName:"TweetResultByRestId",queryId:"([^"]+)""#,
+            in: body
+        ) ?? firstMatch(
+            pattern: #"[{,]id:["'`]([^"'`]{1,80})["'`][^"'`]{0,80}name:["'`]TweetResultByRestId["'`]"#,
             in: body
         )
     }
@@ -866,11 +892,25 @@ private struct XTweetBroadcast {
     }
 }
 
-private struct XTweetResultResponse: Decodable {
+struct XTweetResultResponse: Decodable {
     var data: DataContainer
 
     struct DataContainer: Decodable {
         var tweetResult: TweetResult
+
+        enum CodingKeys: String, CodingKey {
+            case tweetResult
+            case tweetResultByRestID = "tweet_result_by_rest_id"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            if let value = try container.decodeIfPresent(TweetResult.self, forKey: .tweetResult) {
+                tweetResult = value
+            } else {
+                tweetResult = try container.decode(TweetResult.self, forKey: .tweetResultByRestID)
+            }
+        }
     }
 
     struct TweetResult: Decodable {
@@ -882,11 +922,12 @@ private struct XTweetResultResponse: Decodable {
     }
 
     struct Card: Decodable {
-        var legacy: Legacy
+        /// Some tweets return a card stub that is only `{ "id": "…" }`.
+        var legacy: Legacy?
     }
 
     struct Legacy: Decodable {
-        var bindingValues: [BindingValue]
+        var bindingValues: [BindingValue]?
 
         enum CodingKeys: String, CodingKey {
             case bindingValues = "binding_values"

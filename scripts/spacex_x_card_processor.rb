@@ -14,41 +14,14 @@ class SpaceXXCardProcessor
   LIVE_TTL = 15 * 60
   NEGATIVE_TTL = 25 * 60 * 60
 
-  TWEET_RESULT_FEATURES = {
-    creator_subscriptions_tweet_preview_api_enabled: true,
-    premium_content_api_read_enabled: true,
-    communities_web_enable_tweet_community_results_fetch: true,
-    c9s_tweet_anatomy_moderator_badge_enabled: true,
-    responsive_web_grok_analyze_button_fetch_trends_enabled: true,
-    responsive_web_grok_analyze_post_followups_enabled: true,
-    rweb_cashtags_composer_attachment_enabled: true,
-    responsive_web_jetfuel_frame: true,
-    responsive_web_grok_share_attachment_enabled: true,
-    responsive_web_grok_annotations_enabled: true,
-    articles_preview_enabled: true,
-    responsive_web_edit_tweet_api_enabled: true,
-    graphql_is_translatable_rweb_tweet_is_translatable_enabled: true,
-    view_counts_everywhere_api_enabled: true,
-    longform_notetweets_consumption_enabled: true,
-    responsive_web_twitter_article_tweet_consumption_enabled: true,
-    tweet_awards_web_tipping_enabled: false,
-    responsive_web_grok_show_grok_translated_post: true,
-    responsive_web_grok_analysis_button_from_backend: true,
-    standardized_nudges_misinfo: true,
-    tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: true,
-    longform_notetweets_rich_text_read_enabled: true,
-    longform_notetweets_inline_media_enabled: true,
-    responsive_web_grok_image_annotation_enabled: true,
-    responsive_web_grok_imagine_annotation_enabled: true,
-    responsive_web_grok_community_note_auto_translation_is_enabled: true,
-    responsive_web_enhance_cards_enabled: true
-  }.freeze
-
-  TWEET_RESULT_FIELD_TOGGLES = {
-    withArticleRichContentState: true,
-    withArticlePlainText: true,
-    withGrokAnalyze: true,
-    withDisallowedReplyControls: true
+  # Persisted TweetResultByRestId requires these Relay provider variables.
+  # Omitting them returns GRAPHQL_VALIDATION_FAILED ("must be defined").
+  TWEET_RESULT_RELAY_VARIABLES = {
+    "__relay_internal__pv__xclientsfeaturesappviewerisloggedinrelayprovider" => false,
+    "__relay_internal__pv__xclientsfeaturestweetcomponentsgrokanalyzepostrelayprovider" => false,
+    "__relay_internal__pv__xclientsfeaturestranslationnoteautotranslationenabledrelayprovider" => false,
+    "__relay_internal__pv__xclientsfeaturestranslationgroktranslatedpostenabledrelayprovider" => false,
+    "__relay_internal__pv__sportspostcontextenabledrelayprovider" => false
   }.freeze
 
   def initialize(existing_cache: nil, logger: nil, now: Time.now.utc)
@@ -348,17 +321,13 @@ class SpaceXXCardProcessor
   def resolve_tweet_broadcast(tweet_id, configuration, guest_token)
     query_id = configuration[:query_id]
     raise "Could not find TweetResultByRestId query ID" unless query_id
-    query = URI.encode_www_form(
-      variables: JSON.generate(tweetId: tweet_id, withCommunity: false, includePromotedContent: false, withVoice: false),
-      features: JSON.generate(TWEET_RESULT_FEATURES),
-      fieldToggles: JSON.generate(TWEET_RESULT_FIELD_TOGGLES)
-    )
+    query = URI.encode_www_form(variables: JSON.generate(tweet_result_variables(tweet_id)))
     response = request_json(
       "https://x.com/i/api/graphql/#{query_id}/TweetResultByRestId?#{query}",
       bearer_token: configuration.fetch(:bearer_token),
       guest_token: guest_token
     )
-    bindings = response.dig("data", "tweetResult", "result", "card", "legacy", "binding_values")
+    bindings = tweet_result_bindings(response)
     values = Array(bindings).to_h { |binding| [binding["key"], binding["value"]] }
     state = values.dig("broadcast_state", "string_value")
     thumbnails = %w[
@@ -384,6 +353,16 @@ class SpaceXXCardProcessor
       thumbnail_url: thumbnails.first || source["thumbnail_url"] || source["image_url"],
       is_live: state&.downcase == "running"
     }
+  end
+
+  def tweet_result_variables(tweet_id)
+    { "restId" => tweet_id, "withFocalTweet" => true }.merge(TWEET_RESULT_RELAY_VARIABLES)
+  end
+
+  def tweet_result_bindings(response)
+    result = response.dig("data", "tweetResult", "result") ||
+      response.dig("data", "tweet_result_by_rest_id", "result")
+    result&.dig("card", "legacy", "binding_values")
   end
 
   def not_started_broadcast_state?(state)
@@ -421,9 +400,11 @@ class SpaceXXCardProcessor
     bearer_token = web_bearer_token(home)
     query_id = tweet_result_query_id(home)
 
-    # X's logged-out SPA only links an entry module; guest-token and other
-    # chunks are relative imports. Expand the module graph, then fetch in
-    # priority order (guest-token first).
+    # The logged-out page only links an entry module. The guest bearer now
+    # lives in startup-*.js, and TweetResultByRestId is a persisted query
+    # behind a dynamic import. Fetch high-value modules first. A small
+    # module's imports jump the queue so that operation chunk is not stuck
+    # behind the route table (1000+ chunks, fetched alphabetically before).
     candidates = web_script_urls(home)
     visited = {}
     max_fetches = 15
@@ -444,11 +425,7 @@ class SpaceXXCardProcessor
       query_id ||= tweet_result_query_id(script)
 
       discovered = web_script_urls(script, base_url: script_url)
-      next if discovered.empty?
-
-      remaining = candidates
-      candidates = prioritize_web_scripts((discovered + remaining).uniq)
-      candidates.reject! { |url| visited[url] }
+      candidates = enqueue_web_scripts(discovered, candidates, visited)
     end
 
     unless bearer_token
@@ -467,7 +444,7 @@ class SpaceXXCardProcessor
     )
 
     if base_url
-      body.scan(%r{["']((?:\./|\.\./)?(?:assets/)?[^"'<>\s`]+\.js)["']}).flatten.each do |relative|
+      body.scan(%r{["'`]((?:\./|\.\./)?(?:assets/)?[^"'<>\s`]+\.js)["'`]}).flatten.each do |relative|
         next if relative.start_with?("http://", "https://")
         # Ignore bare package-style paths that are not under this CDN module tree.
         next unless relative.start_with?("./", "../", "assets/")
@@ -515,18 +492,85 @@ class SpaceXXCardProcessor
 
   def prioritize_web_scripts(urls)
     urls.select { |url| valid_http_url?(url) }.sort_by do |url|
-      filename = File.basename(URI(url).path)
-      priority = if filename.start_with?("guest-token-")
-        0
-      elsif filename.start_with?("main.")
-        1
-      elsif filename.start_with?("entry-") || filename.include?("entry-client")
-        2
-      else
-        3
-      end
-      [priority, url]
+      [web_script_priority(url), url]
     end
+  end
+
+  def web_script_priority(url)
+    filename = File.basename(URI(url).path)
+    if filename.start_with?("guest-token-")
+      0
+    elsif filename.start_with?("startup-") && !filename.start_with?("startup-vendor")
+      # startup-vendor is a third-party bundle. The bearer lives in startup-*.js.
+      1
+    elsif filename.start_with?("main.")
+      2
+    elsif filename.start_with?("entry-") || filename.include?("entry-client")
+      3
+    elsif filename.include?("prefetch-tweet-result") || filename.include?("TweetResultByRestId")
+      4
+    else
+      9
+    end
+  end
+
+  def high_value_web_script?(url)
+    web_script_priority(url) <= 4
+  end
+
+  # Large bundles only contribute high-value URLs plus a short tail.
+  # A small module's imports jump the low-priority backlog, but stay behind
+  # queued scripts that already have a better priority. Otherwise startup's
+  # vendor import is fetched before startup-dynamic.
+  def enqueue_web_scripts(discovered, candidates, visited)
+    discovered = Array(discovered).reject { |url| visited[url] }
+    interesting, rest = discovered.partition { |url| high_value_web_script?(url) }
+
+    if discovered.size <= 8
+      front = prioritize_web_scripts(discovered)
+      front_set = front.to_h { |url| [url, true] }
+      back = candidates.reject { |url| front_set[url] || visited[url] }
+      return merge_small_module_imports(front, back)
+    end
+
+    tail = prioritize_web_scripts(rest).first(5)
+    seen = visited.dup
+    queued = []
+    prioritize_web_scripts(interesting + candidates).each do |url|
+      next if seen[url]
+
+      seen[url] = true
+      queued << url
+    end
+    tail.each do |url|
+      next if seen[url]
+
+      seen[url] = true
+      queued << url
+    end
+    queued
+  end
+
+  def merge_small_module_imports(fresh, queued)
+    merged = []
+    fresh_index = 0
+    queued_index = 0
+    while fresh_index < fresh.size || queued_index < queued.size
+      if fresh_index == fresh.size
+        merged << queued[queued_index]
+        queued_index += 1
+      elsif queued_index == queued.size
+        merged << fresh[fresh_index]
+        fresh_index += 1
+      elsif web_script_priority(queued[queued_index]) < web_script_priority(fresh[fresh_index])
+        merged << queued[queued_index]
+        queued_index += 1
+      else
+        merged << fresh[fresh_index]
+        fresh_index += 1
+      end
+    end
+    merged
   end
 
   def valid_http_url?(value)
@@ -543,7 +587,8 @@ class SpaceXXCardProcessor
 
   def tweet_result_query_id(body)
     body[/queryId:"([^"]+)",operationName:"TweetResultByRestId"/, 1] ||
-      body[/operationName:"TweetResultByRestId",queryId:"([^"]+)"/, 1]
+      body[/operationName:"TweetResultByRestId",queryId:"([^"]+)"/, 1] ||
+      body[/[{,]id:["'`]([^"'`]{1,80})["'`][^"'`]{0,80}name:["'`]TweetResultByRestId["'`]/, 1]
   end
 
   def page_thumbnail_for(url)

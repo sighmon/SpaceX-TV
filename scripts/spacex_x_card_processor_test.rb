@@ -324,6 +324,124 @@ class SpaceXXCardProcessorTest < Minitest::Test
     assert_includes urls, "https://abs.twimg.com/x-web/x-web/assets/other-chunk.js"
   end
 
+  def test_discovers_backtick_dynamic_imports
+    processor = StubProcessor.new(now: NOW)
+    body = 'const load=()=>import(`./assets/prefetch-tweet-result-by-rest-id-X9fhZGde.js`);'
+    base = "https://abs.twimg.com/x-web/x-web/entry-client-logged-out-Z7.js"
+
+    urls = processor.send(:web_script_urls, body, base_url: base)
+
+    assert_includes urls, "https://abs.twimg.com/x-web/x-web/assets/prefetch-tweet-result-by-rest-id-X9fhZGde.js"
+  end
+
+  def test_prioritizes_startup_bundles_ahead_of_icon_chunks
+    processor = StubProcessor.new(now: NOW)
+    urls = [
+      "https://abs.twimg.com/x-web/x-web/assets/icon-at-aaa.js",
+      "https://abs.twimg.com/x-web/x-web/assets/startup-BKFmkUdL.js",
+      "https://abs.twimg.com/x-web/x-web/assets/startup-vendor-CViFHjoW.js",
+      "https://abs.twimg.com/x-web/x-web/assets/prefetch-tweet-result-by-rest-id-X9.js",
+      "https://abs.twimg.com/x-web/x-web/assets/guest-token-current.js"
+    ]
+
+    ordered = processor.send(:prioritize_web_scripts, urls).map { |url| File.basename(URI(url).path) }
+
+    assert_equal(
+      [
+        "guest-token-current.js",
+        "startup-BKFmkUdL.js",
+        "prefetch-tweet-result-by-rest-id-X9.js",
+        "icon-at-aaa.js",
+        "startup-vendor-CViFHjoW.js"
+      ],
+      ordered
+    )
+  end
+
+  def test_large_module_does_not_enqueue_every_chunk
+    processor = StubProcessor.new(now: NOW)
+    discovered = [
+      "https://abs.twimg.com/x-web/x-web/assets/startup-AAA.js",
+      "https://abs.twimg.com/x-web/x-web/assets/prefetch-tweet-result-by-rest-id-BBB.js"
+    ] + (1..40).map { |index| "https://abs.twimg.com/x-web/x-web/assets/route-#{index}.js" }
+
+    queued = processor.send(:enqueue_web_scripts, discovered, [], {})
+    names = queued.map { |url| File.basename(URI(url).path) }
+
+    assert_equal "startup-AAA.js", names[0]
+    assert_equal "prefetch-tweet-result-by-rest-id-BBB.js", names[1]
+    assert_operator names.size, :<=, 7
+  end
+
+  def test_small_module_imports_jump_ahead_of_the_backlog
+    processor = StubProcessor.new(now: NOW)
+    discovered = [
+      "https://abs.twimg.com/x-web/x-web/assets/retweet-BrJHInlQ.js",
+      "https://abs.twimg.com/x-web/x-web/assets/startup-vendor-CViFHjoW.js"
+    ]
+    backlog = (1..30).map { |index| "https://abs.twimg.com/x-web/x-web/assets/icon-#{index}.js" }
+
+    queued = processor.send(:enqueue_web_scripts, discovered, backlog, {})
+
+    assert_equal "retweet-BrJHInlQ.js", File.basename(URI(queued.first).path)
+  end
+
+  def test_small_module_imports_stay_behind_higher_priority_queued_scripts
+    processor = StubProcessor.new(now: NOW)
+    discovered = [
+      "https://abs.twimg.com/x-web/x-web/assets/startup-vendor-CViFHjoW.js",
+      "https://abs.twimg.com/x-web/x-web/assets/rolldown-runtime-TDXjjWaw.js"
+    ]
+    queued = [
+      "https://abs.twimg.com/x-web/x-web/assets/startup-dynamic-CPNaopl_.js",
+      "https://abs.twimg.com/x-web/x-web/assets/icon-1.js"
+    ]
+
+    names = processor.send(:enqueue_web_scripts, discovered, queued, {}).map { |url| File.basename(URI(url).path) }
+
+    assert_equal(
+      [
+        "startup-dynamic-CPNaopl_.js",
+        "rolldown-runtime-TDXjjWaw.js",
+        "startup-vendor-CViFHjoW.js",
+        "icon-1.js"
+      ],
+      names
+    )
+  end
+
+  def test_extracts_persisted_tweet_result_query_id
+    processor = StubProcessor.new(now: NOW)
+    body = "params:{id:`Qsslz7cgJ7M8J3JofkC5hQ`,metadata:{},name:`TweetResultByRestId`,operationKind:`query`}"
+
+    assert_equal "Qsslz7cgJ7M8J3JofkC5hQ", processor.send(:tweet_result_query_id, body)
+    assert_equal(
+      "legacy-id",
+      processor.send(:tweet_result_query_id, 'queryId:"legacy-id",operationName:"TweetResultByRestId"')
+    )
+  end
+
+  def test_tweet_result_variables_use_rest_id_and_relay_providers
+    processor = StubProcessor.new(now: NOW)
+    variables = processor.send(:tweet_result_variables, "123")
+
+    assert_equal "123", variables["restId"]
+    assert_equal true, variables["withFocalTweet"]
+    assert_equal false, variables["__relay_internal__pv__xclientsfeaturesappviewerisloggedinrelayprovider"]
+  end
+
+  def test_reads_tweet_result_bindings_from_current_and_legacy_payloads
+    processor = StubProcessor.new(now: NOW)
+    bindings = [{ "key" => "broadcast_state" }]
+
+    assert_equal bindings, processor.send(:tweet_result_bindings, {
+      "data" => { "tweet_result_by_rest_id" => { "result" => { "card" => { "legacy" => { "binding_values" => bindings } } } } }
+    })
+    assert_equal bindings, processor.send(:tweet_result_bindings, {
+      "data" => { "tweetResult" => { "result" => { "card" => { "legacy" => { "binding_values" => bindings } } } } }
+    })
+  end
+
   def test_extracts_bearer_token_from_quoted_and_template_forms
     processor = StubProcessor.new(now: NOW)
     token = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
