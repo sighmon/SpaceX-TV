@@ -5,7 +5,17 @@ class SpaceXXCardProcessorTest < Minitest::Test
   NOW = Time.utc(2026, 6, 13, 0, 0, 0)
 
   class StubProcessor < SpaceXXCardProcessor
+    attr_accessor :playlist_response
+    attr_reader :playlist_requests
+
     private
+
+    def request_text(url)
+      (@playlist_requests ||= []) << url
+      raise playlist_response if playlist_response.is_a?(Exception)
+
+      playlist_response || "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1200000\nvideo.m3u8\n"
+    end
 
     def resolve_broadcast(_value)
       {
@@ -251,6 +261,31 @@ class SpaceXXCardProcessorTest < Minitest::Test
       first.dig("entries", "post:video", "lastChecked"),
       second.dig("entries", "post:video", "lastChecked")
     )
+  end
+
+  def test_checks_and_reuses_healthy_cached_replay
+    first = StubProcessor.new(now: NOW).process(response)
+    processor = StubProcessor.new(existing_cache: { "processed_cards" => first }, now: NOW + 60)
+    second = processor.process(response)
+
+    assert_equal ["https://video.pscp.tv/replay.m3u8"], processor.playlist_requests
+    assert_equal first.dig("entries", "post:broadcast"), second.dig("entries", "post:broadcast")
+  end
+
+  def test_refreshes_unexpired_replay_on_http_error_timeout_or_invalid_playlist
+    [RuntimeError.new("HTTP 400"), Net::ReadTimeout.new, "<html>Unavailable</html>"].each do |failure|
+      first = StubProcessor.new(now: NOW).process(response)
+      first.fetch("entries").fetch("post:broadcast")["streamURL"] = "https://old.video.pscp.tv/replay.m3u8"
+      processor = StubProcessor.new(existing_cache: { "processed_cards" => first }, now: NOW + 60)
+      processor.playlist_response = failure
+
+      second = processor.process(response)
+      entry = second.dig("entries", "post:broadcast")
+      assert_equal ["https://old.video.pscp.tv/replay.m3u8"], processor.playlist_requests
+      assert_equal "https://video.pscp.tv/replay.m3u8", entry.fetch("streamURL")
+      assert_equal (NOW + 60).iso8601, entry.fetch("lastChecked")
+      assert_equal first.dig("entries", "post:video"), second.dig("entries", "post:video")
+    end
   end
 
   def test_uses_largest_entity_image_like_the_app

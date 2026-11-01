@@ -70,7 +70,9 @@ class SpaceXXCardProcessor
     )
     key = "post:#{post.fetch("id")}"
 
-    if reusable_entry?(entry = @existing_entries[key], fingerprint)
+    if reusable_entry?(entry = @existing_entries[key], fingerprint) &&
+        (!linked_broadcast_url || entry["isLive"] != false || !entry["streamURL"] ||
+          replay_playlist_available?(entry["streamURL"]))
       @logger.call("Reused processed card #{post.fetch("id")}")
       return entry
     end
@@ -151,6 +153,19 @@ class SpaceXXCardProcessor
 
     Time.parse(entry["expiresAt"]) > @now
   rescue ArgumentError
+    false
+  end
+
+  # CDN playback hosts can stop serving an archive before its card TTL expires.
+  # Check the master on every cron run; a failed check forces X resolution below.
+  # GET also catches HTTP 200 error pages that a HEAD request would accept.
+  def replay_playlist_available?(url)
+    return true if request_text(url).to_s.lstrip.start_with?("#EXTM3U")
+
+    @logger.call("Refreshing cached replay: response is not an HLS playlist")
+    false
+  rescue StandardError => error
+    @logger.call("Refreshing cached replay: #{error.class}: #{error.message}")
     false
   end
 

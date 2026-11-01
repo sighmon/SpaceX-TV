@@ -68,6 +68,10 @@ For simulator testing, the easiest token entry path is usually paste through the
 
 The fallback cache is intended for shared hosting where Ruby and cron are available without extra packages. The script reads the X API Bearer Token from `X_BEARER_TOKEN`, fetches the latest 25 SpaceX posts and reposts, calculates their broadcast/gallery card results, snapshots SpaceX's Starship films, flight tests, launch tiles, and mission data, and writes JSON to `~/www.sighmon.com/spacex-tv/x-cache.json`. Unchanged processed cards are reused until their normal expiry. The app imports these processed results and the SpaceX CMS snapshot in hosted-cache mode; `Use Bearer Token data` continues to fetch and calculate data on-device.
 
+Each cache update checks unexpired broadcast replay URLs with a GET request and verifies that they return an HLS playlist. Failed requests or invalid playlists force fresh resolution through X, so a stale CDN hostname is replaced without waiting for the seven-day replay expiry. Healthy replay URLs and other unchanged cards keep their normal expiry. This checks the master playlist, not every video segment.
+
+To deploy this replay repair to an existing installation, replace `~/scripts/spacex_x_card_processor.rb` with the updated file and run the existing `run_spacex_cache_update.sh` once (or wait for its next cron run). No crontab changes are needed.
+
 Install the scripts somewhere outside the web root, for example:
 
 ```sh
